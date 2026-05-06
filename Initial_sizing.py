@@ -1,0 +1,315 @@
+from __future__ import annotations
+import numpy as np
+from dataclasses import dataclass
+from math import exp, log
+
+
+# -----------------------------------------------------------------------------
+# Geometry and wetted-area formulas
+# -----------------------------------------------------------------------------
+
+def tau(v_tot: float, s_plan: float) -> float:
+    """Kuechemann tau: tau = V_tot / S_plan**1.5."""
+    if s_plan <= 0:
+        raise ValueError("s_plan must be positive.")
+    return v_tot / (s_plan ** 1.5)
+
+
+def total_volume_from_tau(tau_value: float, s_plan: float) -> float:
+    """Rearranged tau formula: V_tot = tau * S_plan**1.5."""
+    if s_plan <= 0:
+        raise ValueError("s_plan must be positive.")
+    return tau_value * (s_plan ** 1.5)
+
+
+def k_w_from_tau(tau, configuration="wing_body"):
+    """
+    Estimate wetted-to-planform area ratio K_w as a function of Küchemann tau.
+
+    K_w = g * tau^(2/3)
+
+    g is a geometry-dependent shape factor.
+    """
+
+    g_values = {
+        "blended_body": 9.0,
+        "wing_body": 10.0,
+        "waverider": 10.5,
+    }
+
+    if configuration not in g_values:
+        raise ValueError(
+            "configuration must be one of: "
+            "'blended_body', 'wing_body', or 'waverider'"
+        )
+
+    g = g_values[configuration]
+
+    return g * tau ** (2.0 / 3.0)
+
+
+def wetted_area(k_w: float, s_plan: float) -> float:
+    """S_wet = K_w(tau) * S_plan."""
+    return k_w * s_plan
+
+# -----------------------------------------------------------------------------
+# Aerodynamic performance formulas
+# -----------------------------------------------------------------------------
+
+def lift_to_drag(mach: float, tau_value: float, A: float = 6.0, B: float = 2.0) -> float:
+    r"""
+    L/D = [A(M+B)/M] * [(1.0128 - 0.2797 ln(tau/0.03)) / (1 - M**2/673)].
+    """
+    if mach <= 0:
+        raise ValueError("mach must be positive.")
+    if tau_value <= 0:
+        raise ValueError("tau_value must be positive.")
+
+    numerator = 1.0128 - 0.2797 * log(tau_value / 0.03)
+    denominator = 1.0 - (mach ** 2) / 673.0
+    return (A * (mach + B) / mach) * (numerator / denominator)
+
+def speed_of_sound(altitude_m: float) -> float:
+    """Approximate speed of sound at cruise altitude (m/s).
+
+    Baseline report S02-M05-SY01 sets the cruise altitude band at
+    25-34 km. We default to 28 km (mid-band) for nominal sizing.
+    """
+    # ISA: a = sqrt(gamma * R * T)
+    if altitude_m <= 11_000.0:
+        T = 288.15 - 0.0065 * altitude_m
+    elif altitude_m <= 20_000.0:
+        T = 216.65
+    elif altitude_m <= 32_000.0:
+        T = 216.65 + 0.001 * (altitude_m - 20_000.0)
+    else:
+        T = 228.65
+    return float(np.sqrt(1.4 * 287.05 * T))
+
+# -----------------------------------------------------------------------------
+# Range and fuel-fraction formulas
+# -----------------------------------------------------------------------------
+
+def range_factor(theta: float, q_cc: float, l_over_d: float) -> float:
+    """RF = theta * Q_cc * (L/D)."""
+    return theta * q_cc * l_over_d
+
+
+def range_factor_from_delta_v(delta_v: float, isp: float, l_over_d: float) -> float:
+    """RF = delta_v * Isp * (L/D)."""
+    return delta_v * isp * l_over_d
+
+
+def range_factor_from_mach(speed_of_sound: float, mach: float, isp: float, l_over_d: float) -> float:
+    """RF = a * M * Isp * (L/D), where a is speed of sound and M is Mach number."""
+    return speed_of_sound * mach * isp * l_over_d
+
+
+def mission_range(rf: float, fuel_fraction: float) -> float:
+    """Range = -RF * ln(1 - ff)."""
+    if rf <= 0:
+        raise ValueError("rf must be positive.")
+    if not 0 <= fuel_fraction < 1:
+        raise ValueError("fuel_fraction must satisfy 0 <= ff < 1.")
+    return -rf * log(1.0 - fuel_fraction)
+
+
+def fuel_fraction_from_range(range_value: float, rf: float) -> float:
+    """ff = 1 - exp(-Range / RF)."""
+    if rf <= 0:
+        raise ValueError("rf must be positive.")
+    return 1.0 - exp(-range_value / rf)
+
+
+def fuel_fraction_breguet(range_value: float, isp: float, delta_v: float, l_over_d: float) -> float:
+    """W_fuel / TOGW = 1 - exp[-Range / (Isp * delta_v * L/D)]."""
+    return fuel_fraction_from_range(range_value, range_factor_from_delta_v(delta_v, isp, l_over_d))
+
+
+def fuel_fraction(w_fuel: float, togw: float) -> float:
+    """ff = W_fuel / TOGW."""
+    if togw <= 0:
+        raise ValueError("togw must be positive.")
+    return w_fuel / togw
+
+
+def fuel_weight(ff: float, togw: float) -> float:
+    """W_fuel = ff * TOGW."""
+    return ff * togw
+
+
+# -----------------------------------------------------------------------------
+# Volume formulas
+# -----------------------------------------------------------------------------
+
+def payload_volume(w_pay: float, rho_pay: float) -> float:
+    """V_pay = W_pay / rho_pay."""
+    if rho_pay <= 0:
+        raise ValueError("rho_pay must be positive.")
+    return w_pay / rho_pay
+
+
+def fuel_volume(w_fuel: float, rho_fuel: float) -> float:
+    """V_fuel = W_fuel / rho_fuel."""
+    if rho_fuel <= 0:
+        raise ValueError("rho_fuel must be positive.")
+    return w_fuel / rho_fuel
+
+
+def void_volume(v_tot: float, eta_v: float) -> float:
+    """V_void = V_tot * (1 - eta_v)."""
+    if not 0 <= eta_v <= 1:
+        raise ValueError("eta_v must satisfy 0 <= eta_v <= 1.")
+    return v_tot * (1.0 - eta_v)
+
+
+def total_required_volume(v_pay: float, v_fuel: float, v_void: float) -> float:
+    """V_tot = V_pay + V_fuel + V_void."""
+    return v_pay + v_fuel + v_void
+
+
+def available_volume_residual(v_available: float, v_required: float) -> float:
+    """Residual for volume convergence: positive means available volume exceeds required volume."""
+    return v_available - v_required
+
+
+# -----------------------------------------------------------------------------
+# Weight formulas
+# -----------------------------------------------------------------------------
+
+def systems_weight(r_sys: float, togw: float) -> float:
+    """W_sys = (W_sys / TOGW) * TOGW = r_sys * TOGW."""
+    return r_sys * togw
+
+
+def propulsion_weight(w_prop_over_thrust: float, l_over_d: float, togw: float) -> float:
+    r"""
+    W_prop = (W_prop / Thrust) * (1 / (L/D)) * TOGW.
+    """
+    if l_over_d <= 0:
+        raise ValueError("l_over_d must be positive.")
+    return w_prop_over_thrust * (1.0 / l_over_d) * togw
+
+
+def propulsion_weight_from_etw(etw: float, l_over_d: float, togw: float) -> float:
+    r"""
+    W_prop = (1 / ETW) * (1 / (L/D)) * TOGW.
+    Here ETW = Thrust / W_prop.
+    """
+    if etw <= 0:
+        raise ValueError("etw must be positive.")
+    if l_over_d <= 0:
+        raise ValueError("l_over_d must be positive.")
+    return (1.0 / etw) * (1.0 / l_over_d) * togw
+
+
+def structural_weight(i_str: float, k_w: float, s_plan: float) -> float:
+    r"""
+    W_str = (W_str / S_wet) * (S_wet / S_plan) * S_plan
+          = I_str * K_w * S_plan.
+    """
+    return i_str * k_w * s_plan
+
+
+def takeoff_gross_weight(w_pay: float, w_fuel: float, w_sys: float, w_prop: float) -> float:
+    """TOGW = W_pay + W_fuel + W_sys + W_prop."""
+    return w_pay + w_fuel + w_sys + w_prop
+
+
+def available_weight_residual(togw_available: float, togw_required: float) -> float:
+    """Residual for weight convergence: positive means available weight exceeds required weight."""
+    return togw_available - togw_required
+
+
+# -----------------------------------------------------------------------------
+# Optional design-evaluation helper
+# -----------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SizingInputs:
+    mach: float
+    range_value: float
+    altitude_m: float
+    w_pay: float
+    rho_pay: float
+    rho_fuel: float
+    eta_v: float
+    r_sys: float
+    tau_value: float
+    s_plan: float
+    i_str: float   
+    isp: float
+    etw: float
+    TOGW: float
+
+def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
+    """
+    Evaluate one sizing point for a chosen tau and S_plan.
+
+    This is not a full optimizer. It computes the direct formula outputs and a
+    simple weight/volume consistency check for the supplied design variables.
+    """
+    k_w = k_w_from_tau(inputs.tau_value, 'blended_body')
+    v_available = total_volume_from_tau(inputs.tau_value, inputs.s_plan)
+    l_d = lift_to_drag(inputs.mach, inputs.tau_value)
+    a = speed_of_sound(inputs.altitude_m)
+    rf = range_factor_from_mach(a, inputs.mach, input.isp, l_d)
+    ff = fuel_fraction_from_range(inputs.range_value, rf)
+    togw_available = input.TOGW
+
+    w_fuel = fuel_weight(ff, togw)
+    w_sys = systems_weight(inputs.r_sys, togw)
+    w_prop = propulsion_weight_from_etw(inputs.etw, l_d, togw)
+    w_str = structural_weight(inputs.i_str, k_w, inputs.s_plan)
+    togw_required = w_fuel + w_sys + w_prop + w_str 
+
+    v_pay = payload_volume(inputs.w_pay, inputs.rho_pay)
+    v_fuel = fuel_volume(w_fuel, inputs.rho_fuel)
+    v_void = void_volume(v_available, inputs.eta_v)
+    v_required = total_required_volume(v_pay, v_fuel, v_void)
+
+    return {
+        "tau": inputs.tau_value,
+        "S_plan": inputs.s_plan,
+        "K_w": k_w,
+        "S_wet": wetted_area(k_w, inputs.s_plan),
+        "L_over_D": l_d,
+        "RF": rf,
+        "fuel_fraction": ff,
+        "TOGW": togw,
+        "W_pay": inputs.w_pay,
+        "W_fuel": w_fuel,
+        "W_sys": w_sys,
+        "W_prop": w_prop,
+        "W_str": w_str,
+        "V_available": v_available,
+        "V_pay": v_pay,
+        "V_fuel": v_fuel,
+        "V_void": v_void,
+        "V_required": v_required,
+        "volume_residual": available_volume_residual(v_available, v_required),
+        "weight_residual": available_weight_residual(togw_available, togw_required),
+    }
+
+
+if __name__ == "__main__":
+    # Example only: replace this with an empirical K_w(tau) fit for your chosen configuration.
+    example = SizingInputs(
+        mach=5.0,
+        range_value=9_500_000.0,  # m
+        altitude_m=28_000,        # m
+        w_pay=4_800.0,            # kg or consistent weight unit
+        rho_pay=100.0,            # kg/m^3
+        rho_fuel=70.0,            # kg/m^3 for LH2, approximate placeholder
+        eta_v=0.7,
+        r_sys=0.10,
+        tau_value=0.16,
+        s_plan=900.0,           # m^2 placeholder
+        i_str=18,
+        isp=1500.0,
+        etw=10.0,
+        TOGW=250_000,
+    )
+
+    for key, value in evaluate_design(example).items():
+        print(f"{key}: {value:.6g}")
