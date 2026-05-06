@@ -2,7 +2,6 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass
 from math import exp, log
-from typing import Callable
 
 
 # -----------------------------------------------------------------------------
