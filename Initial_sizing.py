@@ -1,8 +1,10 @@
 from __future__ import annotations
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import exp, log
-
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
 
 # -----------------------------------------------------------------------------
 # Geometry and wetted-area formulas
@@ -211,9 +213,9 @@ def structural_weight(i_str: float, k_w: float, s_plan: float) -> float:
     return i_str * k_w * s_plan
 
 
-def takeoff_gross_weight(w_pay: float, w_fuel: float, w_sys: float, w_prop: float) -> float:
-    """TOGW = W_pay + W_fuel + W_sys + W_prop."""
-    return w_pay + w_fuel + w_sys + w_prop
+def takeoff_gross_weight(w_pay: float, w_fuel: float, w_sys: float, w_prop: float, w_str: float) -> float:
+    """TOGW = W_pay + W_fuel + W_sys + W_prop + W_str."""
+    return w_pay + w_fuel + w_sys + w_prop + w_str
 
 
 def available_weight_residual(togw_available: float, togw_required: float) -> float:
@@ -241,27 +243,49 @@ class SizingInputs:
     isp: float
     etw: float
     TOGW: float
+    configuration: str = "blended_body"
+
 
 def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
     """
-    Evaluate one sizing point for a chosen tau and S_plan.
+    Evaluate one sizing point for a chosen tau, S_plan, and TOGW.
 
-    This is not a full optimizer. It computes the direct formula outputs and a
-    simple weight/volume consistency check for the supplied design variables.
+    This computes one non-iterated design point. The iteration functions below
+    call this repeatedly until weight and volume residuals converge.
     """
-    k_w = k_w_from_tau(inputs.tau_value, 'blended_body')
-    v_available = total_volume_from_tau(inputs.tau_value, inputs.s_plan)
-    l_d = lift_to_drag(inputs.mach, inputs.tau_value)
-    a = speed_of_sound(inputs.altitude_m)
-    rf = range_factor_from_mach(a, inputs.mach, input.isp, l_d)
-    ff = fuel_fraction_from_range(inputs.range_value, rf)
-    togw_available = input.TOGW
 
-    w_fuel = fuel_weight(ff, togw)
-    w_sys = systems_weight(inputs.r_sys, togw)
-    w_prop = propulsion_weight_from_etw(inputs.etw, l_d, togw)
+    k_w = k_w_from_tau(inputs.tau_value, inputs.configuration)
+    s_wet = wetted_area(k_w, inputs.s_plan)
+
+    v_available = total_volume_from_tau(inputs.tau_value, inputs.s_plan)
+
+    l_d = lift_to_drag(inputs.mach, inputs.tau_value)
+
+    a = speed_of_sound(inputs.altitude_m)
+
+    rf = range_factor_from_mach(
+        a,
+        inputs.mach,
+        inputs.isp,
+        l_d,
+    )
+
+    ff = fuel_fraction_from_range(inputs.range_value, rf)
+
+    togw_available = inputs.TOGW
+
+    w_fuel = fuel_weight(ff, togw_available)
+    w_sys = systems_weight(inputs.r_sys, togw_available)
+    w_prop = propulsion_weight_from_etw(inputs.etw, l_d, togw_available)
     w_str = structural_weight(inputs.i_str, k_w, inputs.s_plan)
-    togw_required = w_fuel + w_sys + w_prop + w_str 
+
+    togw_required = takeoff_gross_weight(
+        inputs.w_pay,
+        w_fuel,
+        w_sys,
+        w_prop,
+        w_str,
+    )
 
     v_pay = payload_volume(inputs.w_pay, inputs.rho_pay)
     v_fuel = fuel_volume(w_fuel, inputs.rho_fuel)
@@ -272,11 +296,12 @@ def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
         "tau": inputs.tau_value,
         "S_plan": inputs.s_plan,
         "K_w": k_w,
-        "S_wet": wetted_area(k_w, inputs.s_plan),
+        "S_wet": s_wet,
         "L_over_D": l_d,
         "RF": rf,
         "fuel_fraction": ff,
-        "TOGW": togw,
+        "TOGW": togw_available,
+        "TOGW_required": togw_required,
         "W_pay": inputs.w_pay,
         "W_fuel": w_fuel,
         "W_sys": w_sys,
@@ -288,28 +313,360 @@ def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
         "V_void": v_void,
         "V_required": v_required,
         "volume_residual": available_volume_residual(v_available, v_required),
-        "weight_residual": available_weight_residual(togw_available, togw_required),
+        "weight_residual": available_weight_residual(
+            togw_available,
+            togw_required,
+        ),
     }
 
 
+def converge_togw(
+    inputs: SizingInputs,
+    tolerance_kg: float = 1.0,
+    relaxation: float = 0.6,
+    max_iterations: int = 100,
+) -> tuple[SizingInputs, dict[str, float]]:
+    """
+    Iterate TOGW until TOGW_available ≈ TOGW_required.
+
+    Positive weight_residual:
+        TOGW guess is too high.
+
+    Negative weight_residual:
+        TOGW guess is too low.
+    """
+
+    current_inputs = inputs
+
+    for iteration in range(max_iterations):
+        result = evaluate_design(current_inputs)
+
+        togw_available = result["TOGW"]
+        togw_required = result["TOGW_required"]
+
+        error = togw_required - togw_available
+
+        if abs(error) < tolerance_kg:
+            result["togw_iterations"] = iteration
+            return current_inputs, result
+
+        new_togw = togw_available + relaxation * error
+
+        if new_togw <= 0:
+            raise RuntimeError("TOGW iteration became non-physical.")
+
+        current_inputs = replace(
+            current_inputs,
+            TOGW=new_togw,
+        )
+
+    result = evaluate_design(current_inputs)
+    result["togw_iterations"] = max_iterations
+    return current_inputs, result
+
+
+def converge_s_plan_and_togw(
+    inputs: SizingInputs,
+    volume_tolerance_m3: float = 1.0,
+    weight_tolerance_kg: float = 1.0,
+    s_plan_relaxation: float = 0.5,
+    togw_relaxation: float = 0.6,
+    max_outer_iterations: int = 100,
+    max_inner_iterations: int = 100,
+) -> tuple[SizingInputs, dict[str, float]]:
+    """
+    Converge both S_plan and TOGW for a fixed tau.
+
+    Outer loop:
+        Adjust S_plan until volume residual is small.
+
+    Inner loop:
+        Adjust TOGW until weight residual is small for the current S_plan.
+    """
+
+    current_inputs = inputs
+
+    for outer_iteration in range(max_outer_iterations):
+
+        # First converge weight for this geometry.
+        current_inputs, result = converge_togw(
+            current_inputs,
+            tolerance_kg=weight_tolerance_kg,
+            relaxation=togw_relaxation,
+            max_iterations=max_inner_iterations,
+        )
+
+        v_available = result["V_available"]
+        v_required = result["V_required"]
+        volume_residual = result["volume_residual"]
+
+        if abs(volume_residual) < volume_tolerance_m3:
+            result["s_plan_iterations"] = outer_iteration
+            return current_inputs, result
+
+        raw_correction = (v_required / v_available) ** (2.0 / 3.0)
+
+        # Relax the update to avoid over-correcting.
+        correction = 1.0 + s_plan_relaxation * (raw_correction - 1.0)
+        # Prevent unstable jumps.
+        correction = max(0.5, min(1.5, correction))
+
+        new_s_plan = current_inputs.s_plan * correction
+
+        if new_s_plan <= 0:
+            raise RuntimeError("S_plan iteration became non-physical.")
+
+        current_inputs = replace(
+            current_inputs,
+            s_plan=new_s_plan,
+        )
+
+    result["s_plan_iterations"] = max_outer_iterations
+    return current_inputs, result
+
+
+def sweep_tau_values(
+    base_inputs: SizingInputs,
+    tau_values: list[float],
+) -> list[dict[str, float]]:
+    """
+    Run the full sizing convergence for several tau values.
+    """
+
+    results = []
+
+    for tau_value in tau_values:
+        trial_inputs = replace(
+            base_inputs,
+            tau_value=tau_value,
+        )
+
+        converged_inputs, result = converge_s_plan_and_togw(trial_inputs)
+
+        result["converged_tau"] = converged_inputs.tau_value
+        result["converged_S_plan"] = converged_inputs.s_plan
+        result["converged_TOGW"] = converged_inputs.TOGW
+
+        results.append(result)
+
+    return results
+
+
+def sweep_tau_and_istr(
+    base_inputs: SizingInputs,
+    tau_values: list[float],
+    i_str_values: list[float],
+) -> list[dict[str, float]]:
+    """
+    Run convergence for several tau and I_str combinations.
+    """
+
+    results = []
+
+    for i_str in i_str_values:
+        for tau_value in tau_values:
+
+            trial_inputs = replace(
+                base_inputs,
+                tau_value=tau_value,
+                i_str=i_str,
+            )
+
+            converged_inputs, result = converge_s_plan_and_togw(trial_inputs)
+
+            result["converged_tau"] = converged_inputs.tau_value
+            result["converged_S_plan"] = converged_inputs.s_plan
+            result["converged_TOGW"] = converged_inputs.TOGW
+            result["input_I_str"] = i_str
+
+            results.append(result)
+
+    return results
+
+
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
+
+
+def plot_solution_space(
+    base_inputs: SizingInputs,
+    s_plan_values: np.ndarray,
+    tau_values: np.ndarray,
+    configuration: str = "wing_body",
+    save_path: str | None = None,
+):
+    """
+    Plot V_tot_required and V_tot_available as 3D surfaces over S_plan and tau.
+
+    For each S_plan-tau combination:
+        1. Set tau and S_plan
+        2. Converge TOGW for that geometry
+        3. Store V_required and V_available
+
+    This produces a figure similar to the solution-space plots in the paper.
+    """
+
+    S_grid, tau_grid = np.meshgrid(s_plan_values, tau_values)
+
+    V_available_grid = np.zeros_like(S_grid, dtype=float)
+    V_required_grid = np.zeros_like(S_grid, dtype=float)
+
+    for i in range(tau_grid.shape[0]):
+        for j in range(tau_grid.shape[1]):
+
+            trial_inputs = replace(
+                base_inputs,
+                tau_value=tau_grid[i, j],
+                s_plan=S_grid[i, j],
+            )
+
+            # Converge only TOGW here.
+            # We do NOT converge S_plan, because S_plan is the x-axis variable.
+            _, result = converge_togw(trial_inputs)
+
+            V_available_grid[i, j] = result["V_available"]
+            V_required_grid[i, j] = result["V_required"]
+
+    scale = 1e4
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    ax.plot_surface(
+        S_grid,
+        tau_grid,
+        V_required_grid / scale,
+        color="red",
+        alpha=0.85,
+        linewidth=0.2,
+        edgecolor="k",
+    )
+
+    ax.plot_surface(
+        S_grid,
+        tau_grid,
+        V_available_grid / scale,
+        color="blue",
+        alpha=0.75,
+        linewidth=0.2,
+        edgecolor="k",
+    )
+
+    ax.set_xlabel(r"$S_{plan}$ [m²]", labelpad=10)
+    ax.set_ylabel(r"$\tau$", labelpad=10)
+    ax.set_zlabel(r"$V_{tot}$ [m³]", labelpad=10)
+
+    ax.text2D(
+        0.08,
+        0.90,
+        r"$\times 10^4$",
+        transform=ax.transAxes,
+        fontsize=11,
+    )
+
+    legend_handles = [
+        Patch(facecolor="red", edgecolor="red", label=r"$V_{tot,req}$"),
+        Patch(facecolor="blue", edgecolor="blue", label=r"$V_{tot,av}$"),
+    ]
+
+    ax.legend(
+        handles=legend_handles,
+        loc="upper right",
+        frameon=False,
+    )
+
+    ax.set_title(f"Solution space for {configuration.replace('_', '-')}", pad=20)
+
+    # Adjust viewing angle to resemble your reference figure.
+    ax.view_init(elev=25, azim=225)
+
+    # Optional: make grid lines dotted.
+    for axis in [ax.xaxis, ax.yaxis, ax.zaxis]:
+        axis._axinfo["grid"].update(
+            {
+                "linewidth": 0.6,
+                "linestyle": ":",
+            }
+        )
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+
 if __name__ == "__main__":
-    # Example only: replace this with an empirical K_w(tau) fit for your chosen configuration.
+
     example = SizingInputs(
         mach=5.0,
-        range_value=9_500_000.0,  # m
-        altitude_m=28_000,        # m
-        w_pay=4_800.0,            # kg or consistent weight unit
-        rho_pay=100.0,            # kg/m^3
-        rho_fuel=70.0,            # kg/m^3 for LH2, approximate placeholder
+        range_value=9_500_000.0,
+        altitude_m=28_000.0,
+        w_pay=4_800.0,
+        rho_pay=100.0,
+        rho_fuel=70.0,
         eta_v=0.7,
         r_sys=0.10,
         tau_value=0.16,
-        s_plan=900.0,           # m^2 placeholder
-        i_str=18,
+        s_plan=900.0,
+        i_str=18.0,
         isp=1500.0,
         etw=10.0,
-        TOGW=250_000,
+        TOGW=250_000.0,
     )
 
-    for key, value in evaluate_design(example).items():
+    converged_inputs, result = converge_s_plan_and_togw(example)
+
+    print("\nConverged input values")
+    print("----------------------")
+    print(f"tau:    {converged_inputs.tau_value:.6g}")
+    print(f"S_plan: {converged_inputs.s_plan:.6g} m²")
+    print(f"TOGW:   {converged_inputs.TOGW:.6g} kg")
+
+    print("\nConverged design results")
+    print("------------------------")
+    for key, value in result.items():
         print(f"{key}: {value:.6g}")
+
+    tau_values = [0.14, 0.15, 0.16, 0.17, 0.18]
+    i_str_values = [15.0, 18.0, 21.0, 24.0]
+
+    results = sweep_tau_and_istr(
+        example,
+        tau_values,
+        i_str_values,
+    )
+
+    print("\nTau and I_str sensitivity sweep")
+    print("-------------------------------")
+    print(
+        "I_str    tau      S_plan [m²]    TOGW [kg]      "
+        "W_str [kg]     S_wet [m²]     fuel frac    V_res [m3]  W_res [kg]"
+    )
+
+    for result in results:
+        print(
+            f"{result['input_I_str']:<9.1f}"
+            f"{result['tau']:<9.3f}"
+            f"{result['S_plan']:<15.3f}"
+            f"{result['TOGW']:<15.3f}"
+            f"{result['W_str']:<15.3f}"
+            f"{result['S_wet']:<15.3f}"
+            f"{result['fuel_fraction']:<10.4f}"
+            f"{result['volume_residual']:<13.3f}"
+            f"{result['weight_residual']:<13.3f}"   
+        )
+'''        
+    s_plan_values = np.linspace(1.0, 2000.0, 40)
+    tau_values = np.linspace(0.001, 0.40, 40)
+
+    plot_solution_space(
+        base_inputs=example,
+        s_plan_values=s_plan_values,
+        tau_values=tau_values,
+        configuration="wing_body",
+        save_path="solution_space_wing_body.png",
+        )
+'''
