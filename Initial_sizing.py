@@ -1,11 +1,3 @@
------
-- Use one consistent unit system throughout (for example SI: m, kg, s, N).
-- K_w(tau) is not given as a closed-form equation in the document, so it is
-  supplied by the user as a function or empirical fit.
-- The document uses TOGW as a weight/mass budget variable. Keep all weight terms
-  in the same units.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
