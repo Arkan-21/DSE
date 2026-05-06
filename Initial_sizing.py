@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import numpy as np
 from dataclasses import dataclass
 from math import exp, log
 from typing import Callable
@@ -23,10 +23,35 @@ def total_volume_from_tau(tau_value: float, s_plan: float) -> float:
     return tau_value * (s_plan ** 1.5)
 
 
+def k_w_from_tau(tau, configuration="wing_body"):
+    """
+    Estimate wetted-to-planform area ratio K_w as a function of Küchemann tau.
+
+    K_w = g * tau^(2/3)
+
+    g is a geometry-dependent shape factor.
+    """
+
+    g_values = {
+        "blended_body": 9.0,
+        "wing_body": 10.0,
+        "waverider": 10.5,
+    }
+
+    if configuration not in g_values:
+        raise ValueError(
+            "configuration must be one of: "
+            "'blended_body', 'wing_body', or 'waverider'"
+        )
+
+    g = g_values[configuration]
+
+    return g * tau ** (2.0 / 3.0)
+
+
 def wetted_area(k_w: float, s_plan: float) -> float:
     """S_wet = K_w(tau) * S_plan."""
     return k_w * s_plan
-
 
 # -----------------------------------------------------------------------------
 # Aerodynamic performance formulas
@@ -45,6 +70,22 @@ def lift_to_drag(mach: float, tau_value: float, A: float = 6.0, B: float = 2.0) 
     denominator = 1.0 - (mach ** 2) / 673.0
     return (A * (mach + B) / mach) * (numerator / denominator)
 
+def speed_of_sound(altitude_m: float) -> float:
+    """Approximate speed of sound at cruise altitude (m/s).
+
+    Baseline report S02-M05-SY01 sets the cruise altitude band at
+    25-34 km. We default to 28 km (mid-band) for nominal sizing.
+    """
+    # ISA: a = sqrt(gamma * R * T)
+    if altitude_m <= 11_000.0:
+        T = 288.15 - 0.0065 * altitude_m
+    elif altitude_m <= 20_000.0:
+        T = 216.65
+    elif altitude_m <= 32_000.0:
+        T = 216.65 + 0.001 * (altitude_m - 20_000.0)
+    else:
+        T = 228.65
+    return float(np.sqrt(1.4 * 287.05 * T))
 
 # -----------------------------------------------------------------------------
 # Range and fuel-fraction formulas
@@ -176,6 +217,11 @@ def takeoff_gross_weight(w_pay: float, w_fuel: float, w_sys: float, w_prop: floa
     return w_pay + w_fuel + w_sys + w_prop
 
 
+def available_weight_residual(togw_available: float, togw_required: float) -> float:
+    """Residual for weight convergence: positive means available weight exceeds required weight."""
+    return togw_available - togw_required
+
+
 # -----------------------------------------------------------------------------
 # Optional design-evaluation helper
 # -----------------------------------------------------------------------------
@@ -184,44 +230,39 @@ def takeoff_gross_weight(w_pay: float, w_fuel: float, w_sys: float, w_prop: floa
 class SizingInputs:
     mach: float
     range_value: float
+    altitude_m: float
     w_pay: float
     rho_pay: float
     rho_fuel: float
     eta_v: float
     r_sys: float
-    i_str: float
-    s_plan: float
     tau_value: float
+    s_plan: float
+    i_str: float   
     isp: float
-    delta_v: float
     etw: float
+    TOGW: float
 
-'''
-def evaluate_design(inputs: SizingInputs, k_w_function: Callable[[float], float]) -> dict[str, float]:
+def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
     """
     Evaluate one sizing point for a chosen tau and S_plan.
 
     This is not a full optimizer. It computes the direct formula outputs and a
     simple weight/volume consistency check for the supplied design variables.
     """
-    k_w = k_w_function(inputs.tau_value)
+    k_w = k_w_from_tau(inputs.tau_value, 'blended_body')
     v_available = total_volume_from_tau(inputs.tau_value, inputs.s_plan)
     l_d = lift_to_drag(inputs.mach, inputs.tau_value)
-    rf = range_factor_from_delta_v(inputs.delta_v, inputs.isp, l_d)
+    a = speed_of_sound(inputs.altitude_m)
+    rf = range_factor_from_mach(a, inputs.mach, input.isp, l_d)
     ff = fuel_fraction_from_range(inputs.range_value, rf)
-
-    # Closed-form TOGW estimate from TOGW = W_pay + ff*TOGW + r_sys*TOGW + W_prop.
-    # W_prop = (1/ETW)*(1/(L/D))*TOGW.
-    prop_fraction = (1.0 / inputs.etw) * (1.0 / l_d)
-    denominator = 1.0 - ff - inputs.r_sys - prop_fraction
-    if denominator <= 0:
-        raise ValueError("No positive TOGW solution: fuel + system + propulsion fractions exceed 1.")
-    togw = inputs.w_pay / denominator
+    togw_available = input.TOGW
 
     w_fuel = fuel_weight(ff, togw)
     w_sys = systems_weight(inputs.r_sys, togw)
     w_prop = propulsion_weight_from_etw(inputs.etw, l_d, togw)
     w_str = structural_weight(inputs.i_str, k_w, inputs.s_plan)
+    togw_required = w_fuel + w_sys + w_prop + w_str 
 
     v_pay = payload_volume(inputs.w_pay, inputs.rho_pay)
     v_fuel = fuel_volume(w_fuel, inputs.rho_fuel)
@@ -248,30 +289,28 @@ def evaluate_design(inputs: SizingInputs, k_w_function: Callable[[float], float]
         "V_void": v_void,
         "V_required": v_required,
         "volume_residual": available_volume_residual(v_available, v_required),
+        "weight_residual": available_weight_residual(togw_available, togw_required),
     }
 
 
 if __name__ == "__main__":
     # Example only: replace this with an empirical K_w(tau) fit for your chosen configuration.
-    def example_k_w(tau_value: float) -> float:
-        return 3.0
-
     example = SizingInputs(
         mach=5.0,
         range_value=9_500_000.0,  # m
-        w_pay=4_000.0,            # kg or consistent weight unit
+        altitude_m=28_000,        # m
+        w_pay=4_800.0,            # kg or consistent weight unit
         rho_pay=100.0,            # kg/m^3
         rho_fuel=70.0,            # kg/m^3 for LH2, approximate placeholder
-        eta_v=0.85,
+        eta_v=0.7,
         r_sys=0.10,
-        i_str=150.0,              # kg/m^2 placeholder
-        s_plan=1_000.0,           # m^2 placeholder
         tau_value=0.16,
+        s_plan=900.0,           # m^2 placeholder
+        i_str=18,
         isp=1500.0,
-        delta_v=9.81,             # use g0 if Isp is in seconds, or a*M if using RF = a*M*Isp*L/D
         etw=10.0,
+        TOGW=250_000,
     )
 
-    for key, value in evaluate_design(example, example_k_w).items():
+    for key, value in evaluate_design(example).items():
         print(f"{key}: {value:.6g}")
-'''
