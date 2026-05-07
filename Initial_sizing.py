@@ -803,7 +803,7 @@ if __name__ == "__main__":
     example = SizingInputs(
         mach=5.0,
         range_value=9_500_000.0,
-        altitude_m=28_000.0,
+        altitude_m=35_000.0,
         w_pay=7_000,
         rho_pay=100.0,
         rho_fuel=70.0,
