@@ -803,7 +803,7 @@ if __name__ == "__main__":
     example = SizingInputs(
         mach=5.0,
         range_value=9_500_000.0,
-        altitude_m=35_000.0,
+        altitude_m=28_000.0,
         w_pay=7_000,
         rho_pay=100.0,
         rho_fuel=70.0,
@@ -848,7 +848,7 @@ if __name__ == "__main__":
     print("-------------------------------")
     print(
         "I_str    tau      S_plan [m²]    TOGW [kg]      "
-        "W_str [kg]     S_wet [m²]     fuel frac    V_res [m3]  W_res [kg]"
+        "W_str [kg]     S_wet [m²]     fuel frac    V_res [m3]  W_res [kg]  W_prop [kg]"
     )
 
     for result in results:
@@ -861,7 +861,8 @@ if __name__ == "__main__":
             f"{result['S_wet']:<15.3f}"
             f"{result['fuel_fraction']:<10.4f}"
             f"{result['volume_residual']:<13.3f}"
-            f"{result['weight_residual']:<13.3f}"   
+            f"{result['weight_residual']:<13.3f}"
+            f"{result['W_prop']:<15.3f}"   
         )    
 
     '''        
