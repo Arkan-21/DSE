@@ -769,7 +769,12 @@ def plot_converged_istr21_results(results: list[dict[str, float]]):
 
     # Flatten so we can index linearly; hide the unused 9th panel
     axes_flat = axes.flatten()
-    axes_flat[-1].set_visible(False)
+
+    # Delete unused subplot axes
+    for ax in axes_flat[len(plots):]:
+        fig.delaxes(ax)
+
+    axes_flat = axes_flat[:len(plots)]
 
     for ax, (_, values, ylabel, short_title) in zip(axes_flat, plots):
 
@@ -814,6 +819,7 @@ if __name__ == "__main__":
 
     converged_inputs, result = converge_s_plan_and_togw(example)
 
+    '''
     print("\nConverged input values")
     print("----------------------")
     print(f"tau:    {converged_inputs.tau_value:.6g}")
@@ -824,7 +830,8 @@ if __name__ == "__main__":
     print("------------------------")
     for key, value in result.items():
         print(f"{key}: {value:.6g}")
-
+    '''
+    
     tau_values = np.round(np.arange(0.06, 0.22 + 0.01, 0.01), 2)
     i_str_values = [15.0, 18.0, 21.0, 24.0]
 
@@ -834,8 +841,10 @@ if __name__ == "__main__":
         i_str_values,
     )
 
+
     plot_converged_istr21_results(results)
 
+    '''
     print("\nTau and I_str sensitivity sweep")
     print("-------------------------------")
     print(
@@ -855,7 +864,9 @@ if __name__ == "__main__":
             f"{result['volume_residual']:<13.3f}"
             f"{result['weight_residual']:<13.3f}"   
         )
-'''        
+    '''    
+
+    '''        
     s_plan_values = np.linspace(1.0, 2000.0, 40)
     tau_values = np.linspace(0.001, 0.40, 40)
 
@@ -866,4 +877,4 @@ if __name__ == "__main__":
         configuration="wing_body",
         save_path="solution_space_wing_body.png",
         )
-'''
+    '''
