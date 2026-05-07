@@ -598,6 +598,110 @@ def plot_solution_space(
     plt.show()
 
 
+def plot_converged_istr21_results(results: list[dict[str, float]]):
+    """
+    Plot converged sizing variables versus S_plan for only I_str = 21.
+
+    Each point is one converged tau case.
+    """
+
+    # Keep only I_str = 21 results
+    istr21_results = [
+        result for result in results
+        if abs(result["input_I_str"] - 21.0) < 1e-6
+    ]
+
+    # Sort by tau so the curve connects points in tau order
+    istr21_results = sorted(
+        istr21_results,
+        key=lambda result: result["tau"]
+    )
+
+    s_plan = np.array([result["S_plan"] for result in istr21_results])
+    tau = np.array([result["tau"] for result in istr21_results])
+
+    # At convergence, V_available ≈ V_required.
+    # Use V_available as V_tot.
+    v_tot = np.array([result["V_available"] for result in istr21_results])
+    s_wet = np.array([result["S_wet"] for result in istr21_results])
+    w_str = np.array([result["W_str"] for result in istr21_results])
+    w_fuel = np.array([result["W_fuel"] for result in istr21_results])
+    togw = np.array([result["TOGW"] for result in istr21_results])
+    v_fuel = np.array([result["V_fuel"] for result in istr21_results])
+
+    # OWE = systems + propulsion + structure
+    owe = np.array([
+        result["W_sys"] + result["W_prop"] + result["W_str"]
+        for result in istr21_results
+    ])
+
+    plots = {
+        "V_tot": {
+            "values": v_tot,
+            "ylabel": r"$V_{tot}$ [m³]",
+            "title": r"$V_{tot}$ vs $S_{plan}$, $I_{str}=21$",
+        },
+        "S_wet": {
+            "values": s_wet,
+            "ylabel": r"$S_{wet}$ [m²]",
+            "title": r"$S_{wet}$ vs $S_{plan}$, $I_{str}=21$",
+        },
+        "W_str": {
+            "values": w_str,
+            "ylabel": r"$W_{str}$ [kg]",
+            "title": r"$W_{str}$ vs $S_{plan}$, $I_{str}=21$",
+        },
+        "OWE": {
+            "values": owe,
+            "ylabel": r"OWE [kg]",
+            "title": r"OWE vs $S_{plan}$, $I_{str}=21$",
+        },
+        "W_fuel": {
+            "values": w_fuel,
+            "ylabel": r"$W_{fuel}$ [kg]",
+            "title": r"$W_{fuel}$ vs $S_{plan}$, $I_{str}=21$",
+        },
+        "TOGW": {
+            "values": togw,
+            "ylabel": r"TOGW [kg]",
+            "title": r"TOGW vs $S_{plan}$, $I_{str}=21$",
+        },
+        "V_fuel": {
+            "values": v_fuel,
+            "ylabel": r"$V_{fuel}$ [m³]",
+            "title": r"$V_{fuel}$ vs $S_{plan}$, $I_{str}=21$",
+        },
+    }
+
+    for variable_name, plot_data in plots.items():
+
+        plt.figure(figsize=(7, 5))
+
+        plt.plot(
+            s_plan,
+            plot_data["values"],
+            marker="x",
+            linewidth=1.5,
+        )
+
+        # Add tau labels next to each point
+        for x, y, tau_value in zip(s_plan, plot_data["values"], tau):
+            plt.annotate(
+                rf"$\tau={tau_value:.2f}$",
+                xy=(x, y),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=9,
+            )
+
+        plt.xlabel(r"$S_{plan}$ [m²]")
+        plt.ylabel(plot_data["ylabel"])
+        plt.title(plot_data["title"])
+        plt.grid(True, linestyle=":")
+        plt.tight_layout()
+        plt.show()
+
+
 if __name__ == "__main__":
 
     example = SizingInputs(
@@ -630,7 +734,7 @@ if __name__ == "__main__":
     for key, value in result.items():
         print(f"{key}: {value:.6g}")
 
-    tau_values = [0.14, 0.15, 0.16, 0.17, 0.18]
+    tau_values = np.round(np.arange(0.06, 0.22 + 0.01, 0.01), 2)
     i_str_values = [15.0, 18.0, 21.0, 24.0]
 
     results = sweep_tau_and_istr(
@@ -638,6 +742,8 @@ if __name__ == "__main__":
         tau_values,
         i_str_values,
     )
+
+    plot_converged_istr21_results(results)
 
     print("\nTau and I_str sensitivity sweep")
     print("-------------------------------")
