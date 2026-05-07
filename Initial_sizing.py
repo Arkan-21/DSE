@@ -269,7 +269,7 @@ class SizingInputs:
     isp: float
     etw: float
     TOGW: float
-    configuration: str = "wing_body"
+    configuration: str = "blended_body"
 
 
 def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
@@ -727,9 +727,9 @@ def plot_solution_space(
 #         plt.tight_layout()
 #         plt.show()
 
-def plot_converged_istr21_results(results: list[dict[str, float]]):
+def plot_converged_istr24_results(results: list[dict[str, float]]):
     """
-    Plot converged sizing variables versus S_plan for only I_str = 21,
+    Plot converged sizing variables versus S_plan for only I_str = 24,
     all in one figure window.
     """
 
@@ -804,14 +804,14 @@ if __name__ == "__main__":
         mach=5.0,
         range_value=9_500_000.0,
         altitude_m=28_000.0,
-        w_pay=7000,
+        w_pay=7_000,
         rho_pay=100.0,
         rho_fuel=70.0,
         eta_v=0.7,
         r_sys=0.16,
         tau_value=0.16,
         s_plan=900.0,
-        i_str=21.0,
+        i_str=24.0,
         isp=1800.0,
         etw=8,
         TOGW=250_000.0,
@@ -842,9 +842,8 @@ if __name__ == "__main__":
     )
 
 
-    plot_converged_istr21_results(results)
+    plot_converged_istr24_results(results)
 
-    '''
     print("\nTau and I_str sensitivity sweep")
     print("-------------------------------")
     print(
@@ -863,8 +862,7 @@ if __name__ == "__main__":
             f"{result['fuel_fraction']:<10.4f}"
             f"{result['volume_residual']:<13.3f}"
             f"{result['weight_residual']:<13.3f}"   
-        )
-    '''    
+        )    
 
     '''        
     s_plan_values = np.linspace(1.0, 2000.0, 40)
