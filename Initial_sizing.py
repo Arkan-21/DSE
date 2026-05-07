@@ -28,26 +28,52 @@ def k_w_from_tau(tau, configuration="wing_body"):
     """
     Estimate wetted-to-planform area ratio K_w as a function of Küchemann tau.
 
-    K_w = g * tau^(2/3)
+    Polynomial fits:
+        waverider:
+            K_w = 5632.2*tau^4 - 3106*tau^3 + 621.37*tau^2 - 46.623*tau + 3.8167
 
-    g is a geometry-dependent shape factor.
+        wing_body:
+            K_w = 473.07*tau^4 - 366.2*tau^3 + 110.36*tau^2 - 9.6647*tau + 2.9019
+
+        blended_body:
+            K_w = 18.594*tau^2 + 0.0084*tau + 2.4274
     """
 
-    g_values = {
-        "blended_body": 9.0,
-        "wing_body": 10.0,
-        "waverider": 10.5,
-    }
+    tau = np.asarray(tau)
 
-    if configuration not in g_values:
+    if np.any(tau <= 0):
+        raise ValueError("tau must be positive.")
+
+    if configuration == "waverider":
+        return (
+            5632.2 * tau**4
+            - 3106.0 * tau**3
+            + 621.37 * tau**2
+            - 46.623 * tau
+            + 3.8167
+        )
+
+    elif configuration == "wing_body":
+        return (
+            473.07 * tau**4
+            - 366.2 * tau**3
+            + 110.36 * tau**2
+            - 9.6647 * tau
+            + 2.9019
+        )
+
+    elif configuration == "blended_body":
+        return (
+            18.594 * tau**2
+            + 0.0084 * tau
+            + 2.4274
+        )
+
+    else:
         raise ValueError(
             "configuration must be one of: "
             "'blended_body', 'wing_body', or 'waverider'"
         )
-
-    g = g_values[configuration]
-
-    return g * tau ** (2.0 / 3.0)
 
 
 def wetted_area(k_w: float, s_plan: float) -> float:
@@ -243,7 +269,7 @@ class SizingInputs:
     isp: float
     etw: float
     TOGW: float
-    configuration: str = "blended_body"
+    configuration: str = "wing_body"
 
 
 def evaluate_design(inputs: SizingInputs) -> dict[str, float]:
