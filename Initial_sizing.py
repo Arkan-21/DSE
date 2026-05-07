@@ -733,25 +733,25 @@ def plot_converged_istr21_results(results: list[dict[str, float]]):
     all in one figure window.
     """
 
-    istr21_results = [
+    istr24_results = [
         result for result in results
-        if abs(result["input_I_str"] - 21.0) < 1e-6
+        if abs(result["input_I_str"] - 24.0) < 1e-6
     ]
 
-    istr21_results = sorted(istr21_results, key=lambda result: result["tau"])
+    istr24_results = sorted(istr24_results, key=lambda result: result["tau"])
 
-    s_plan = np.array([result["S_plan"] for result in istr21_results])
-    tau    = np.array([result["tau"]    for result in istr21_results])
+    s_plan = np.array([result["S_plan"] for result in istr24_results])
+    tau    = np.array([result["tau"]    for result in istr24_results])
 
-    v_tot  = np.array([result["V_available"] for result in istr21_results])
-    s_wet  = np.array([result["S_wet"]       for result in istr21_results])
-    w_str  = np.array([result["W_str"]       for result in istr21_results])
-    w_fuel = np.array([result["W_fuel"]      for result in istr21_results])
-    togw   = np.array([result["TOGW"]        for result in istr21_results])
-    v_fuel = np.array([result["V_fuel"]      for result in istr21_results])
+    v_tot  = np.array([result["V_available"] for result in istr24_results])
+    s_wet  = np.array([result["S_wet"]       for result in istr24_results])
+    w_str  = np.array([result["W_str"]       for result in istr24_results])
+    w_fuel = np.array([result["W_fuel"]      for result in istr24_results])
+    togw   = np.array([result["TOGW"]        for result in istr24_results])
+    v_fuel = np.array([result["V_fuel"]      for result in istr24_results])
     owe    = np.array([
         result["W_sys"] + result["W_prop"] + result["W_str"]
-        for result in istr21_results
+        for result in istr24_results
     ])
 
     plots = [
@@ -765,7 +765,7 @@ def plot_converged_istr21_results(results: list[dict[str, float]]):
     ]
 
     fig, axes = plt.subplots(3, 3, figsize=(14, 10))
-    fig.suptitle(r"Converged sizing results, $I_{str} = 21$", fontsize=13)
+    fig.suptitle(r"Converged sizing results, $I_{str} = 24$", fontsize=13)
 
     # Flatten so we can index linearly; hide the unused 9th panel
     axes_flat = axes.flatten()
@@ -804,14 +804,14 @@ if __name__ == "__main__":
         mach=5.0,
         range_value=9_500_000.0,
         altitude_m=28_000.0,
-        w_pay=6000,
+        w_pay=7000,
         rho_pay=100.0,
         rho_fuel=70.0,
         eta_v=0.7,
-        r_sys=0.10,
+        r_sys=0.16,
         tau_value=0.16,
         s_plan=900.0,
-        i_str=18.0,
+        i_str=21.0,
         isp=1800.0,
         etw=8,
         TOGW=250_000.0,
