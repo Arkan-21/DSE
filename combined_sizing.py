@@ -478,8 +478,8 @@ if __name__ == "__main__":
         MissionSegment(
             mode="T_eq_D",
             I_sp=1800.0,
-            D=100_000.0,
-            delta_t=600.0,
+            D=84000.0,
+            delta_t=5400,
         ),
 
         MissionSegment(mode="fixed", fixed_fraction=1.0),
