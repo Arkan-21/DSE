@@ -28,22 +28,27 @@ def W_landinggear(W_to: float) -> float:
     return 0.01 * W_to**1.124
 
 
+def isa_temperature(altitude_m: float) -> float:
+    """
+    Approximate ISA static temperature [K].
+    """
+    if altitude_m <= 11_000.0:
+        return 288.15 - 0.0065 * altitude_m
+    elif altitude_m <= 20_000.0:
+        return 216.65
+    elif altitude_m <= 32_000.0:
+        return 216.65 + 0.001 * (altitude_m - 20_000.0)
+    else:
+        return 228.65
+
+
 def speed_of_sound(altitude_m: float) -> float:
     """
-    Approximate ISA speed of sound.
+    Approximate ISA speed of sound [m/s].
     """
     gamma = 1.4
     R = 287.05
-
-    if altitude_m <= 11_000.0:
-        T = 288.15 - 0.0065 * altitude_m
-    elif altitude_m <= 20_000.0:
-        T = 216.65
-    elif altitude_m <= 32_000.0:
-        T = 216.65 + 0.001 * (altitude_m - 20_000.0)
-    else:
-        T = 228.65
-
+    T = isa_temperature(altitude_m)
     return math.sqrt(gamma * R * T)
 
 
@@ -119,19 +124,6 @@ def ramjet_thrust_and_isp(
     """
     Ramjet thrust and Isp estimate.
 
-    Thrust:
-        T = p0 A3 gamma M0² [
-                sqrt((T4/T0)/(1 + ((gamma-1)/2)M0²)) - 1
-            ]
-
-    Isp relation:
-        Isp_velocity * a0 / H_f =
-            ((gamma - 1) M0 / [1 + ((gamma - 1)/2)M0²])
-            *
-            [
-                sqrt((T4/T0)/(1 + ((gamma-1)/2)M0²)) + 1
-            ]
-
     Returns:
         thrust [N]
         I_sp [s]
@@ -154,7 +146,6 @@ def ramjet_thrust_and_isp(
         T4_T0 = ramjet_temperature_ratio_max(M0, gamma)
 
     stagnation_factor = 1.0 + ((gamma - 1.0) / 2.0) * M0**2
-
     root_term = math.sqrt(T4_T0 / stagnation_factor)
 
     thrust_ideal = (
@@ -167,7 +158,6 @@ def ramjet_thrust_and_isp(
 
     thrust = eta_thrust * thrust_ideal
 
-    # Your corrected version of the Isp expression
     isp_velocity_ideal = (
         (h_f_mass / a0)
         * (gamma - 1.0) * M0
@@ -203,43 +193,47 @@ def ramjet_thrust_and_isp(
 def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
     """
     Wetted-to-planform area ratio K_W as a function of Küchemann tau.
+
+    For paper reproduction, this is currently forced to K_W = 2.407.
+    To return to the polynomial fits, comment out `return 2.407`
+    and uncomment the polynomial section.
     """
-    """
-    if tau <= 0:
-        raise ValueError("tau must be positive.")
 
-    if configuration == "waverider":
-        return (
-            5632.2 * tau**4
-            - 3106.0 * tau**3
-            + 621.37 * tau**2
-            - 46.623 * tau
-            + 3.8167
-        )
+    return 2.407
 
-    elif configuration == "wing_body":
-        return (
-            473.07 * tau**4
-            - 366.2 * tau**3
-            + 110.36 * tau**2
-            - 9.6647 * tau
-            + 2.9019
-        )
-
-    elif configuration == "blended_body":
-        return (
-            18.594 * tau**2
-            + 0.0084 * tau
-            + 2.4274
-        )
-
-    else:
-        raise ValueError(
-            "configuration must be one of: "
-            "'waverider', 'wing_body', or 'blended_body'."
-        )
-    """
-    return 2.407    
+    # if tau <= 0:
+    #     raise ValueError("tau must be positive.")
+    #
+    # if configuration == "waverider":
+    #     return (
+    #         5632.2 * tau**4
+    #         - 3106.0 * tau**3
+    #         + 621.37 * tau**2
+    #         - 46.623 * tau
+    #         + 3.8167
+    #     )
+    #
+    # elif configuration == "wing_body":
+    #     return (
+    #         473.07 * tau**4
+    #         - 366.2 * tau**3
+    #         + 110.36 * tau**2
+    #         - 9.6647 * tau
+    #         + 2.9019
+    #     )
+    #
+    # elif configuration == "blended_body":
+    #     return (
+    #         18.594 * tau**2
+    #         + 0.0084 * tau
+    #         + 2.4274
+    #     )
+    #
+    # else:
+    #     raise ValueError(
+    #         "configuration must be one of: "
+    #         "'waverider', 'wing_body', or 'blended_body'."
+    #     )
 
 
 # =============================================================================
@@ -256,16 +250,15 @@ class MissionSegment:
         "T_gt_D" -> uses exp[-Δ(h + V²/2g) / (Isp V (1 - D/T))]
         "T_eq_D" -> uses exp[-D Δt / (Isp W)]
 
-    fuel_type:
-        "JetA"
-        "LH2"
-        "none"
+    Drag:
+        Lift-balance drag is used:
+            D = W_current * g * (C_D / C_L)
 
-    propulsion_mode:
-        "turbojet"
-        "ramjet"
-        "scramjet"
-        "none"
+        This assumes each segment is flown such that L ≈ W.
+
+    Notes:
+        mach_drag and altitude_drag are kept only for reporting/context.
+        They are NOT used for drag in this version.
     """
 
     name: str
@@ -279,27 +272,69 @@ class MissionSegment:
     V_average: float = 0.0
     g: float = 9.81
     I_sp: float = 0.0
+
+    # Manual drag fallback, used only if C_L or C_D is not supplied
     D: float = 0.0
+
+    # Aerodynamic coefficients
+    C_L: float = 0.0
+    C_D: float = 0.0
+
+    # Retained only for context/reporting
+    mach_drag: float = 0.0
+    altitude_drag: float = 0.0
+
+    # Segment thrust [N]
     T: float = 0.0
 
+    # For T = D cruise
     delta_t: float = 0.0
 
+    # For fixed fraction segments
     fixed_fraction: float = 1.0
 
 
-def segment_weight_fraction(segment: MissionSegment, W_current: float) -> float:
+def segment_drag(
+    segment: MissionSegment,
+    W_current: float,
+) -> float:
+    """
+    Calculate segment drag using lift balance:
+
+        D = W_current * g * (C_D / C_L)
+
+    If C_L or C_D is missing, use the manually stored segment.D.
+    """
+
+    if segment.C_L > 0.0 and segment.C_D > 0.0:
+        W_current_force = W_current * segment.g
+        return W_current_force * (segment.C_D / segment.C_L)
+
+    return segment.D
+
+
+def segment_weight_fraction(
+    segment: MissionSegment,
+    W_current: float,
+) -> tuple[float, float]:
     """
     Calculate W_i / W_{i-1} for one mission segment.
+
+    Returns:
+        fraction
+        D_used
     """
+
+    D_used = segment_drag(segment, W_current)
 
     if segment.mode == "fixed":
         fraction = segment.fixed_fraction
 
     elif segment.mode == "T_gt_D":
-        if segment.T <= segment.D:
+        if segment.T <= D_used:
             raise ValueError(
                 f"For segment '{segment.name}', mode='T_gt_D' requires T > D. "
-                f"Current T={segment.T:.3f} N, D={segment.D:.3f} N."
+                f"Current T={segment.T:.3f} N, D={D_used:.3f} N."
             )
         if segment.I_sp <= 0:
             raise ValueError(f"For segment '{segment.name}', I_sp must be positive.")
@@ -314,7 +349,7 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float) -> float:
         exponent = -delta_energy_height / (
             segment.I_sp
             * segment.V_average
-            * (1.0 - segment.D / segment.T)
+            * (1.0 - D_used / segment.T)
         )
 
         fraction = math.exp(exponent)
@@ -327,7 +362,7 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float) -> float:
 
         W_current_force = W_current * segment.g
 
-        exponent = -(segment.D * segment.delta_t) / (
+        exponent = -(D_used * segment.delta_t) / (
             segment.I_sp * W_current_force
         )
 
@@ -341,7 +376,7 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float) -> float:
             f"Invalid segment fraction in segment '{segment.name}': {fraction}"
         )
 
-    return fraction
+    return fraction, D_used
 
 
 def fuel_masses_from_segments(
@@ -356,6 +391,7 @@ def fuel_masses_from_segments(
     float,
     list[float],
     float,
+    dict[str, float],
     dict[str, float],
     dict[str, float],
 ]:
@@ -377,13 +413,18 @@ def fuel_masses_from_segments(
     segment_fractions = []
     segment_burns = {}
     segment_propulsion_modes = {}
+    segment_drags = {}
 
     mission_burn_JetA = 0.0
     mission_burn_LH2_ramjet = 0.0
     mission_burn_LH2_scramjet = 0.0
 
     for segment in segments:
-        fraction = segment_weight_fraction(segment, W_current)
+        fraction, D_used = segment_weight_fraction(
+            segment=segment,
+            W_current=W_current,
+        )
+
         burned_mass = W_current * (1.0 - fraction)
 
         if segment.fuel_type == "JetA":
@@ -412,6 +453,7 @@ def fuel_masses_from_segments(
         segment_fractions.append(fraction)
         segment_burns[segment.name] = burned_mass
         segment_propulsion_modes[segment.name] = segment.propulsion_mode
+        segment_drags[segment.name] = D_used
 
         W_current *= fraction
 
@@ -434,6 +476,7 @@ def fuel_masses_from_segments(
         total_mission_fraction,
         segment_burns,
         segment_propulsion_modes,
+        segment_drags,
     )
 
 
@@ -483,7 +526,7 @@ def converge_TOGW_for_fixed_S_plan(
     W_to_guess: float,
     weight_tol: float = 1.0,
     weight_relaxation: float = 0.6,
-    max_weight_iter: int = 200,
+    max_weight_iter: int = 500,
 ) -> tuple[float, dict]:
 
     S_wet = s_wet(K_W, S_plan)
@@ -505,6 +548,7 @@ def converge_TOGW_for_fixed_S_plan(
             total_mission_fraction,
             segment_burns,
             segment_propulsion_modes,
+            segment_drags,
         ) = fuel_masses_from_segments(
             W_to=W_to,
             segments=segments,
@@ -520,9 +564,7 @@ def converge_TOGW_for_fixed_S_plan(
         )
 
         W_tank = (1.0 - KIT) * I_tank * V_tank_capacity
-
         W_lg = W_landinggear(W_to)
-
         W_sub = I_sub * W_to
 
         W_to_required = (
@@ -565,6 +607,7 @@ def converge_TOGW_for_fixed_S_plan(
                 "segment_fractions": segment_fractions,
                 "segment_burns": segment_burns,
                 "segment_propulsion_modes": segment_propulsion_modes,
+                "segment_drags": segment_drags,
                 "total_mission_fraction": total_mission_fraction,
             }
 
@@ -609,7 +652,6 @@ def required_volume(
 ) -> dict[str, float]:
 
     V_structure = (I_str * K_W * S_plan) / rho_str
-
     V_tps = (I_tps * K_W * S_plan) / rho_tps
 
     V_tank_capacity, V_LH2, V_JetA = tank_volume_two_fuels(
@@ -694,8 +736,8 @@ def converge_S_plan_and_TOGW(
     weight_tol: float = 1.0,
     S_plan_relaxation: float = 0.5,
     weight_relaxation: float = 0.6,
-    max_size_iter: int = 100,
-    max_weight_iter: int = 200,
+    max_size_iter: int = 300,
+    max_weight_iter: int = 500,
 ) -> tuple[float, float, dict]:
 
     if tau <= 0:
@@ -778,7 +820,6 @@ def converge_S_plan_and_TOGW(
             return S_plan, W_to, result
 
         raw_correction = (V_required / V_tot_available) ** (2.0 / 3.0)
-
         correction = 1.0 + S_plan_relaxation * (raw_correction - 1.0)
         correction = max(0.5, min(1.5, correction))
 
@@ -799,15 +840,6 @@ def converge_S_plan_and_TOGW(
 
 if __name__ == "__main__":
 
-    # -------------------------------------------------------------------------
-    # Mission profile: Mach 8, 30 km, 2000 km range
-    #
-    # Propulsion mode rule:
-    #   turbojet : M < 3
-    #   ramjet   : 3 <= M < 6
-    #   scramjet : M >= 6
-    # -------------------------------------------------------------------------
-
     h0 = 0.0
     h10 = 10_000.0
     h30 = 30_000.0
@@ -817,7 +849,6 @@ if __name__ == "__main__":
     V_M17_h10 = mach_to_velocity(1.7, h10)
     V_M8_h30 = mach_to_velocity(8.0, h30)
 
-    # Internal split points for segment 5
     M_start_seg5 = 1.7
     M_end_seg5 = 8.0
 
@@ -853,75 +884,65 @@ if __name__ == "__main__":
         eta_isp=0.9,
     )
 
+    # -------------------------------------------------------------------------
+    # Temporary ramjet thrust override
+    # -------------------------------------------------------------------------
+
+    USE_RAMJET_THRUST_OVERRIDE = True
+    RAMJET_THRUST_OVERRIDE = 2_000_000.0  # N
+
+    T_ramjet_physics = T_ramjet_calc
+
+    if USE_RAMJET_THRUST_OVERRIDE:
+        T_ramjet_calc = RAMJET_THRUST_OVERRIDE
+
     print("\nRamjet model estimate")
     print("---------------------")
-    print(f"M_ramjet_avg:   {M_ramjet_avg:.2f}")
-    print(f"h_ramjet_avg:   {h_ramjet_avg:.1f} m")
-    print(f"A3_ramjet:      {A3_ramjet:.4f} m²")
-    print(f"T4/T0:          {ramjet_info['T4_T0']:.3f}")
-    print(f"p0:             {ramjet_info['p0']:.3f} Pa")
-    print(f"T_ramjet:       {T_ramjet_calc:.3f} N")
-    print(f"Isp_ramjet:     {Isp_ramjet_calc:.3f} s")
+    print(f"M_ramjet_avg:     {M_ramjet_avg:.2f}")
+    print(f"h_ramjet_avg:     {h_ramjet_avg:.1f} m")
+    print(f"A3_ramjet:        {A3_ramjet:.4f} m²")
+    print(f"T4/T0:            {ramjet_info['T4_T0']:.3f}")
+    print(f"p0:               {ramjet_info['p0']:.3f} Pa")
+    print(f"T_ramjet_physics: {T_ramjet_physics:.3f} N")
+    print(f"T_ramjet_used:    {T_ramjet_calc:.3f} N")
+    print(f"Isp_ramjet:       {Isp_ramjet_calc:.3f} s")
 
     # -------------------------------------------------------------------------
     # Propulsion thrust values [N]
     # -------------------------------------------------------------------------
 
-    T_turbojet_operating = 133_446.6
+    T_turbojet_operating = 1_035_000.0
+    T_takeoff = T_turbojet_operating
+    T_scramjet_acceleration = 2_050_000.0
 
-    T_scramjet_acceleration = 72_930.0  # M6 -> M8 acceleration/climb
-    T_scramjet_cruise = 68_640.0        # Mach 8 cruise
-
-    # -------------------------------------------------------------------------
-    # Segment-specific drag values [N]
-    #
-    # Each T_gt_D segment must satisfy T > D.
-    # Cruise uses T_eq_D, so D_cruise_M8_30km = T_scramjet_cruise.
-    # -------------------------------------------------------------------------
-
-    D_takeoff = 0.0                         # not used, fixed fraction
-    D_accel_M07 = 100_000.0
-    D_accel_M09_climb_10km = 100_000.0
-    D_accel_M17 = 100_000.0
-    D_climb_M17_to_M3 = 100_000.0
-    D_climb_M3_to_M6 = 60_000.0
-    D_climb_M6_to_M8 = 60_000.0
-    D_cruise_M8_30km = T_scramjet_cruise
-    D_landing = 0.0                         # not used, fixed fraction
+    # For T_eq_D cruise, thrust is displayed as D in the printout
+    T_scramjet_cruise = 0.0
 
     # -------------------------------------------------------------------------
-    # Sanity checks
+    # Aerodynamic coefficients by segment
     # -------------------------------------------------------------------------
 
-    if T_turbojet_operating <= max(
-        D_accel_M07,
-        D_accel_M09_climb_10km,
-        D_accel_M17,
-        D_climb_M17_to_M3,
-    ):
-        raise ValueError(
-            "Turbojet operating thrust must be larger than all turbojet "
-            "T_gt_D segment drag values."
-        )
+    CL_takeoff = 0.45
+    CL_accel_M07 = 0.20
+    CL_climb_10km = 0.32
+    CL_accel_M17 = 0.21
+    CL_climb_M17_to_M3 = 0.20
+    CL_climb_M3_to_M6 = 0.094
+    CL_climb_M6_to_M8 = 0.063
+    CL_cruise_M8_30km = 0.032
+    CL_descent = 0.18
+    CL_landing = 0.45
 
-    if T_ramjet_calc <= D_climb_M3_to_M6:
-        raise ValueError(
-            f"Ramjet thrust must be larger than D_climb_M3_to_M6. "
-            f"T_ramjet_calc={T_ramjet_calc:.3f} N, "
-            f"D_climb_M3_to_M6={D_climb_M3_to_M6:.3f} N."
-        )
-
-    if T_scramjet_acceleration <= D_climb_M6_to_M8:
-        raise ValueError(
-            f"Scramjet acceleration thrust must be larger than D_climb_M6_to_M8. "
-            f"T_scramjet_acceleration={T_scramjet_acceleration:.3f} N, "
-            f"D_climb_M6_to_M8={D_climb_M6_to_M8:.3f} N."
-        )
-
-    if abs(T_scramjet_cruise - D_cruise_M8_30km) > 1e-9:
-        raise ValueError(
-            "For T_eq_D cruise, set D_cruise_M8_30km equal to T_scramjet_cruise."
-        )
+    CD_takeoff = 0.085
+    CD_accel_M07 = 0.025
+    CD_climb_10km = 0.040
+    CD_accel_M17 = 0.028
+    CD_climb_M17_to_M3 = 0.012
+    CD_climb_M3_to_M6 = 0.012
+    CD_climb_M6_to_M8 = 0.011
+    CD_cruise_M8_30km = 0.005
+    CD_descent = 0.018
+    CD_landing = 0.095
 
     # -------------------------------------------------------------------------
     # Mission segments
@@ -934,6 +955,11 @@ if __name__ == "__main__":
             fuel_type="JetA",
             propulsion_mode="turbojet",
             fixed_fraction=0.990,
+            C_L=CL_takeoff,
+            C_D=CD_takeoff,
+            mach_drag=0.2,
+            altitude_drag=h0,
+            T=T_takeoff,
         ),
 
         MissionSegment(
@@ -946,7 +972,10 @@ if __name__ == "__main__":
             V_final=V_M07_h0,
             V_average=0.5 * V_M07_h0,
             I_sp=2200.0,
-            D=D_accel_M07,
+            C_L=CL_accel_M07,
+            C_D=CD_accel_M07,
+            mach_drag=0.35,
+            altitude_drag=h0,
             T=T_turbojet_operating,
         ),
 
@@ -960,7 +989,10 @@ if __name__ == "__main__":
             V_final=V_M09_h10,
             V_average=0.5 * (V_M07_h0 + V_M09_h10),
             I_sp=2000.0,
-            D=D_accel_M09_climb_10km,
+            C_L=CL_climb_10km,
+            C_D=CD_climb_10km,
+            mach_drag=0.8,
+            altitude_drag=5_000.0,
             T=T_turbojet_operating,
         ),
 
@@ -974,7 +1006,10 @@ if __name__ == "__main__":
             V_final=V_M17_h10,
             V_average=0.5 * (V_M09_h10 + V_M17_h10),
             I_sp=1600.0,
-            D=D_accel_M17,
+            C_L=CL_accel_M17,
+            C_D=CD_accel_M17,
+            mach_drag=1.25,
+            altitude_drag=h10,
             T=T_turbojet_operating,
         ),
 
@@ -988,7 +1023,10 @@ if __name__ == "__main__":
             V_final=V_M3_hM3,
             V_average=0.5 * (V_M17_h10 + V_M3_hM3),
             I_sp=1400.0,
-            D=D_climb_M17_to_M3,
+            C_L=CL_climb_M17_to_M3,
+            C_D=CD_climb_M17_to_M3,
+            mach_drag=2.35,
+            altitude_drag=0.5 * (h10 + h_M3),
             T=T_turbojet_operating,
         ),
 
@@ -1002,7 +1040,10 @@ if __name__ == "__main__":
             V_final=V_M6_hM6,
             V_average=0.5 * (V_M3_hM3 + V_M6_hM6),
             I_sp=Isp_ramjet_calc,
-            D=D_climb_M3_to_M6,
+            C_L=CL_climb_M3_to_M6,
+            C_D=CD_climb_M3_to_M6,
+            mach_drag=4.5,
+            altitude_drag=0.5 * (h_M3 + h_M6),
             T=T_ramjet_calc,
         ),
 
@@ -1015,8 +1056,11 @@ if __name__ == "__main__":
             V_initial=V_M6_hM6,
             V_final=V_M8_h30,
             V_average=0.5 * (V_M6_hM6 + V_M8_h30),
-            I_sp=3600.0,
-            D=D_climb_M6_to_M8,
+            I_sp=2800.0,
+            C_L=CL_climb_M6_to_M8,
+            C_D=CD_climb_M6_to_M8,
+            mach_drag=7.0,
+            altitude_drag=0.5 * (h_M6 + h30),
             T=T_scramjet_acceleration,
         ),
 
@@ -1025,8 +1069,11 @@ if __name__ == "__main__":
             mode="T_eq_D",
             fuel_type="LH2",
             propulsion_mode="scramjet",
-            I_sp=3300.0,
-            D=D_cruise_M8_30km,
+            I_sp=2500.0,
+            C_L=CL_cruise_M8_30km,
+            C_D=CD_cruise_M8_30km,
+            mach_drag=8.0,
+            altitude_drag=h30,
             T=T_scramjet_cruise,
             delta_t=cruise_time,
         ),
@@ -1037,6 +1084,10 @@ if __name__ == "__main__":
             fuel_type="none",
             propulsion_mode="none",
             fixed_fraction=1.0,
+            C_L=CL_descent,
+            C_D=CD_descent,
+            mach_drag=3.0,
+            altitude_drag=15_000.0,
         ),
 
         MissionSegment(
@@ -1045,13 +1096,17 @@ if __name__ == "__main__":
             fuel_type="JetA",
             propulsion_mode="turbojet",
             fixed_fraction=0.997,
+            C_L=CL_landing,
+            C_D=CD_landing,
+            mach_drag=0.25,
+            altitude_drag=h0,
         ),
     ]
 
     S_plan, W_to, result = converge_S_plan_and_TOGW(
         tau=0.0446,
         configuration="blended_body",
-        S_plan_guess=800.0,
+        S_plan_guess=750.0,
 
         I_str=20.0,
         I_tps=6.0,
@@ -1065,11 +1120,11 @@ if __name__ == "__main__":
 
         I_sub=0.04,
 
-        W_prop=54_264.5,
-        V_prop=10.0,
+        W_prop=35_000.0,
+        V_prop=200.0,
 
         W_payload=10_000.0,
-        rho_payload=100.0,
+        rho_payload=70.0,
 
         segments=segments,
         k_rf=0.06,
@@ -1082,12 +1137,14 @@ if __name__ == "__main__":
 
         K_lg=0.01,
         K_sub=0.02,
-        K_void=0.20,
+        K_void=0.30,
 
         volume_tol=1.0,
         weight_tol=1.0,
         S_plan_relaxation=0.5,
         weight_relaxation=0.6,
+        max_size_iter=300,
+        max_weight_iter=500,
     )
 
     print("\nConverged values")
@@ -1126,11 +1183,26 @@ if __name__ == "__main__":
     print("\nSegment drag/thrust values")
     print("--------------------------")
     for segment in segments:
+        D_used = result["segment_drags"].get(segment.name, 0.0)
+
+        # For cruise T_eq_D, thrust equals drag by definition
+        if segment.mode == "T_eq_D":
+            T_display = D_used
+        else:
+            T_display = segment.T
+
+        if segment.C_D > 0.0:
+            L_over_D = segment.C_L / segment.C_D
+        else:
+            L_over_D = 0.0
+
         print(
             f"{segment.name:<38s} "
-            f"D={segment.D:>10.3f} N   "
-            f"T={segment.T:>10.3f} N   "
-            f"Isp={segment.I_sp:>10.3f} s"
+            f"D={D_used:>12.3f} N   "
+            f"T={T_display:>12.3f} N   "
+            f"CL={segment.C_L:>7.3f}   "
+            f"CD={segment.C_D:>7.4f}   "
+            f"L/D={L_over_D:>7.3f}"
         )
 
     print("\nWeight breakdown")
