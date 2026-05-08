@@ -464,14 +464,14 @@ class Engine:
 
     # ------------------------------------------------------------------
     def isolator_properties(self, inlet_props: dict) -> dict:
-        Ma0    = inlet_props["Ma"]
-        T0     = inlet_props["T0"]
-        P0     = inlet_props["P0"]
-        V0     = inlet_props["V0"]
-        Pt0    = inlet_props["Pt0"]
-        gamma0 = inlet_props["gamma0"]
-        cp0    = inlet_props["cp0"]
-        mdot   = inlet_props["mdot"]
+        Ma0    = self._f(inlet_props["Ma"])
+        T0     = self._f(inlet_props["T0"])
+        P0     = self._f(inlet_props["P0"])
+        V0     = self._f(inlet_props["V0"])
+        Pt0    = self._f(inlet_props["Pt0"])
+        gamma0 = self._f(inlet_props["gamma0"])
+        cp0    = self._f(inlet_props["cp0"])
+        mdot   = self._f(inlet_props["mdot"])
 
         # Step 1: Ma1 from fixed epsilon = 0.4 
         M1 = self.EPSILON * Ma0
@@ -521,81 +521,76 @@ class Engine:
             "cp1":    cp1,
             "R1":     R1,
             "sigma_c": sigma_c,
+            "mdot": mdot
         }
     
+    def _f(self, x):
+        """Force scalar float (prevents numpy sequence bugs)."""
+        return float(np.asarray(x).squeeze())
+    
+    def _scalar(self, x):
+        """Force anything into float safely."""
+        if isinstance(x, (list, tuple, np.ndarray)):
+            return float(x[0])
+        return float(x)
+
+
     def combustor_properties2(self, isolator_props: dict) -> dict:
-        L_12 = self.L12
-        A1  = isolator_props["A1"]
-        A2  = self.alpha12 * A1
+        L_12 = self._f(self.L12)
+
+        A1 = self._f(isolator_props["A1"])
+        alpha12 = self._f(self.alpha12)
+
+        A2 = alpha12 * A1
+
         cf = self.CF_DEFAULT
         n_steps = 300
 
-        Ma1 = isolator_props["Ma1"]
-        T1  = isolator_props["T1"]  
-        p1  = isolator_props["p1"]
-        mdot = isolator_props["mdot"]
-        A1  = isolator_props["A1"]
-
-        gamma1 = isolator_props["gamma1"]
-        cp1    = isolator_props["cp1"]
+        Ma1 = self._f(isolator_props["Ma1"])
+        T1  = self._f(isolator_props["T1"])
+        p1  = self._f(isolator_props["p1"])
+        mdot = self._f(isolator_props["mdot"])
 
         def geometry_fn(x):
-
-            # linear area variation
-            A = A1 + (A2 - A1) * (x / L_12)
-
+            s = x / L_12
+            A = A1 + (A2 - A1) * s
             dA_dx = (A2 - A1) / L_12
-
-            # circular hydraulic diameter
-            D = np.sqrt(4 * A / np.pi)
-
+            D = np.sqrt(4.0 * A / np.pi)
             return A, dA_dx, D
-        
+
         def thermo_fn(T, p):
             gamma = self.air.specific_heat_ratio(T, p)
             Cp    = self.air.specific_cp(T, p)
-            comp = self.air.equilibrium_composition(T, p/101325)
+            comp  = self.air.equilibrium_composition(T, p / 101325)
 
-            W = (sum(comp[s] * self.air.MOLECULAR_WEIGHTS[s]
-                    for s in comp)* 1e-3)
-            dW_dx = 0.0
-            return gamma, Cp, W, dW_dx
-        
+            W = sum(comp[s] * self.air.MOLECULAR_WEIGHTS[s] for s in comp) * 1e-3
+            return gamma, Cp, W, 0.0
+
         def source_fn(x, mdot_local):
-            dH_dx = 0.0
-            dmdot_dx = 0.0
-            return dH_dx, dmdot_dx
-        
+            return 0.0, 0.0
+
         result = self.shapiroODE.integrate(
-            x_start = 0.0,
-            x_end   = L_12,
-            Ma2_in  = Ma1**2,
-            p_in    = p1,
-            T_in    = T1,
-            mdot_in = mdot,
-            geometry_fn = geometry_fn,
-            thermo_fn   = thermo_fn,
-            source_fn   = source_fn,
-            Cf          = cf,
-            n_steps     = n_steps,
+            x_start=0.0,
+            x_end=L_12,
+            Ma2_in=Ma1**2,
+            p_in=p1,
+            T_in=T1,
+            mdot_in=mdot,
+            geometry_fn=geometry_fn,
+            thermo_fn=thermo_fn,
+            source_fn=source_fn,
+            Cf=cf,
+            n_steps=n_steps,
         )
 
-        # ----------------------------------------------------------
-        # Extract outlet state
-        # ----------------------------------------------------------
-        Ma2   = result["Ma"][-1]
-        T2    = result["T"][-1]
-        p2    = result["p"][-1]
-        rho2  = result["rho"][-1]
-        V2    = result["V"][-1]
-        Tt2   = result["Tt"][-1]
-        Pt2   = result["Pt"][-1]
+        Ma2 = self._f(result["Ma"][-1])
 
-        gamma2 = self.air.specific_heat_ratio(T2, p2)
-
-        cp2 = self.air.specific_cp(T2, p2)
-
-        R2 = self.air.specific_R(T2, p2)
+        T2 = self._f(result["T"][-1])
+        p2 = self._f(result["p"][-1])
+        rho2 = self._f(result["rho"][-1])
+        V2 = self._f(result["V"][-1])
+        Tt2 = self._f(result["Tt"][-1])
+        Pt2 = self._f(result["Pt"][-1])
 
         return {
             "Ma2": Ma2,
@@ -606,9 +601,9 @@ class Engine:
             "rho2": rho2,
             "V2": V2,
             "A2": A2,
-            "gamma2": gamma2,
-            "cp2": cp2,
-            "R2": R2,
+            "gamma2": self.air.specific_heat_ratio(T2, p2),
+            "cp2": self.air.specific_cp(T2, p2),
+            "R2": self.air.specific_R(T2, p2),
             "mdot": mdot,
             "solution": result,
         }
@@ -617,384 +612,147 @@ class Engine:
     def optimal_fuel_air_ratio(self) -> float:
         return 0.0291 # FIX: use nasa cea to make it more accurate, this is just a placeholder value for hydrogen
     
-    def combustor_properties3(
-        self,
-        combustor_properties2: dict
-    ) -> dict:
-        """
-        Section 2 -> 3
+    def combustor_properties3(self, combustor_properties2: dict) -> dict:
 
-        Fuel injection region.
+        L_23 = self._scalar(self.L23)
 
-        Assumptions:
-        ------------
-        - fuel added gradually
-        - NO combustion yet
-        - NO heat release
-        - momentum affected by mass addition
-        """
+        A2 = self._scalar(combustor_properties2["A2"])
+        A3 = self._scalar(self.alpha13) * A2
 
-        # ----------------------------------------------------------
-        # Geometry
-        # ----------------------------------------------------------
-        L_23 = self.L23
-
-        A2 = combustor_properties2["A2"]
-
-        A3 = self.alpha13 * A2
-
-        cf = self.CF_DEFAULT
-
-        n_steps = 300
-
-        # ----------------------------------------------------------
-        # Inlet state
-        # ----------------------------------------------------------
-        Ma2  = combustor_properties2["Ma2"]
-
-        T2   = combustor_properties2["T2"]
-
-        p2   = combustor_properties2["p2"]
-
-        mdot_air = combustor_properties2["mdot"]
-
-        # ----------------------------------------------------------
-        # Fuel injection
-        # ----------------------------------------------------------
-        combustion_phi = 1.0
+        Ma2 = self._scalar(combustor_properties2["Ma2"])
+        T2  = self._scalar(combustor_properties2["T2"])
+        p2  = self._scalar(combustor_properties2["p2"])
+        mdot_air = self._scalar(combustor_properties2["mdot"])
 
         FAR = self.optimal_fuel_air_ratio()
+        mfuel_total = FAR * mdot_air
 
-        mfuel_total = FAR * mdot_air * combustion_phi
+        dmdot_dx = mfuel_total / L_23
 
-        # distributed fuel injection
-        dmdot_dx_const = mfuel_total / L_23
-
-        # ----------------------------------------------------------
-        # Geometry function
-        # ----------------------------------------------------------
         def geometry_fn(x):
-
+            x = self._scalar(x)
             A = A2 + (A3 - A2) * (x / L_23)
-
             dA_dx = (A3 - A2) / L_23
-
             D = np.sqrt(4 * A / np.pi)
-
             return A, dA_dx, D
 
-        # ----------------------------------------------------------
-        # Thermodynamics
-        # ----------------------------------------------------------
         def thermo_fn(T, p):
-
             gamma = self.air.specific_heat_ratio(T, p)
-
             Cp = self.air.specific_cp(T, p)
 
-            # air molecular weight
             W_air = 28.97e-3
+            W_h2 = 2.016e-3
 
-            # hydrogen molecular weight
-            W_H2 = 2.016e-3
+            xfuel = min(mfuel_total / (mdot_air + mfuel_total), 0.99)
+            W = (1 - xfuel) * W_air + xfuel * W_h2
 
-            # crude mixture estimate
-            xfuel = min(
-                (dmdot_dx_const * L_23) /
-                (mdot_air + dmdot_dx_const * L_23),
-                0.99
-            )
+            return gamma, Cp, W, 0.0
 
-            W = (1 - xfuel) * W_air + xfuel * W_H2
-
-            dW_dx = 0.0
-
-            return gamma, Cp, W, dW_dx
-
-        # ----------------------------------------------------------
-        # Source terms
-        # ----------------------------------------------------------
         def source_fn(x, mdot_local):
+            return 0.0, dmdot_dx
 
-            # NO heat release yet
-            dH_dx = 0.0
-
-            # fuel addition only
-            dmdot_dx = dmdot_dx_const
-
-            return dH_dx, dmdot_dx
-
-        # ----------------------------------------------------------
-        # Integrate Shapiro equations
-        # ----------------------------------------------------------
         result = self.shapiroODE.integrate(
-            x_start = 0.0,
-            x_end   = L_23,
-
-            Ma2_in  = Ma2**2,
-
-            p_in    = p2,
-
-            T_in    = T2,
-
-            mdot_in = mdot_air,
-
-            geometry_fn = geometry_fn,
-
-            thermo_fn = thermo_fn,
-
-            source_fn = source_fn,
-
-            Cf = cf,
-
-            n_steps = n_steps,
+            x_start=0.0,
+            x_end=L_23,
+            Ma2_in=Ma2**2,
+            p_in=p2,
+            T_in=T2,
+            mdot_in=mdot_air,
+            geometry_fn=geometry_fn,
+            thermo_fn=thermo_fn,
+            source_fn=source_fn,
+            Cf=self.CF_DEFAULT,
+            n_steps=300,
         )
 
-        # ----------------------------------------------------------
-        # Extract outlet state
-        # ----------------------------------------------------------
-        Ma3  = result["Ma"][-1]
-
-        T3   = result["T"][-1]
-
-        p3   = result["p"][-1]
-
-        rho3 = result["rho"][-1]
-
-        V3   = result["V"][-1]
-
-        Tt3  = result["Tt"][-1]
-
-        Pt3  = result["Pt"][-1]
-
-        mdot3 = result["mdot"][-1]
-
-        gamma3 = self.air.specific_heat_ratio(T3, p3)
-
-        cp3 = self.air.specific_cp(T3, p3)
-
-        R3 = self.air.specific_R(T3, p3)
-
         return {
-            "Ma3": Ma3,
-            "T3": T3,
-            "Tt3": Tt3,
-            "p3": p3,
-            "pt3": Pt3,
-            "rho3": rho3,
-            "V3": V3,
+            "Ma3": result["Ma"][-1],
+            "T3": result["T"][-1],
+            "p3": result["p"][-1],
+            "rho3": result["rho"][-1],
+            "V3": result["V"][-1],
+            "Tt3": result["Tt"][-1],
+            "Pt3": result["Pt"][-1],
             "A3": A3,
-            "gamma3": gamma3,
-            "cp3": cp3,
-            "R3": R3,
-            "mdot": mdot3,
+            "mdot": result["mdot"][-1],
             "mfuel": mfuel_total,
             "solution": result,
         }
 
-    def combustor_properties4(
-        self,
-        combustor_properties3: dict
-    ) -> dict:
-        """
-        Section 3 -> 4
+    def combustor_properties4(self, combustor_properties3: dict) -> dict:
 
-        Combustion region.
+        L_34 = self._scalar(self.L34)
 
-        Assumptions:
-        ------------
-        - no additional fuel injection
-        - equilibrium combustion
-        - finite mixing efficiency
-        - distributed heat release
-        """
+        A3 = self._scalar(combustor_properties3["A3"])
+        A4 = self._scalar(self.alpha14) * A3
 
-        # ----------------------------------------------------------
-        # Geometry
-        # ----------------------------------------------------------
-        L_34 = self.L34
+        Ma3 = self._scalar(combustor_properties3["Ma3"])
+        T3  = self._scalar(combustor_properties3["T3"])
+        p3  = self._scalar(combustor_properties3["p3"])
 
-        A3 = combustor_properties3["A3"]
+        mdot = self._scalar(combustor_properties3["mdot"])
+        mfuel = self._scalar(combustor_properties3["mfuel"])
 
-        A4 = self.alpha14 * A3
+        LHV = 120e6
+        theta = 90.0
 
-        cf = self.CF_DEFAULT
-
-        n_steps = 400
-
-        # ----------------------------------------------------------
-        # Inlet state
-        # ----------------------------------------------------------
-        Ma3 = combustor_properties3["Ma3"]
-
-        T3 = combustor_properties3["T3"]
-
-        p3 = combustor_properties3["p3"]
-
-        mdot = combustor_properties3["mdot"]
-
-        mfuel = combustor_properties3["mfuel"]
-
-        # ----------------------------------------------------------
-        # Combustion parameters
-        # ----------------------------------------------------------
-        combustion_phi = 1.0
-
-        # hydrogen lower heating value
-        LHV = 120e6     # J/kg
-
-        # injector angle
-        theta_deg = 90.0
-
-        # ----------------------------------------------------------
-        # Mixing efficiency
-        # ----------------------------------------------------------
         def mixing_efficiency(x):
-
-            xi = x
-
-            # normalized combustor coordinate
-            s = (xi - 0.0) / L_34
-
+            s = self._scalar(x) / L_34
             s = np.clip(s, 1e-6, 1.0)
 
-            if theta_deg == 0.0:
-
-                eta_mix = s
-
-            elif theta_deg == 90.0:
-
-                eta_mix = 1.0 + 0.176 * np.log(s)
-
+            if theta == 0.0:
+                return s
             else:
-                raise ValueError(
-                    "Only θ = 0° or 90° supported."
-                )
+                return np.clip(1.0 + 0.176 * np.log(s), 0.0, 1.0)
 
-            return np.clip(eta_mix, 0.0, 1.0)
-
-        # ----------------------------------------------------------
-        # Geometry function
-        # ----------------------------------------------------------
         def geometry_fn(x):
-
+            x = self._scalar(x)
             A = A3 + (A4 - A3) * (x / L_34)
-
             dA_dx = (A4 - A3) / L_34
-
             D = np.sqrt(4 * A / np.pi)
-
             return A, dA_dx, D
 
-        # ----------------------------------------------------------
-        # Thermodynamics
-        # ----------------------------------------------------------
         def thermo_fn(T, p):
-
             gamma = self.air.specific_heat_ratio(T, p)
-
             Cp = self.air.specific_cp(T, p)
 
-            comp = self.air.equilibrium_composition(
-                T,
-                p / 101325
-            )
+            comp = self.air.equilibrium_composition(T, p / 101325)
+            W = sum(comp[s] * self.air.MOLECULAR_WEIGHTS[s] for s in comp) * 1e-3
 
-            W = (
-                sum(
-                    comp[s] * self.air.MOLECULAR_WEIGHTS[s]
-                    for s in comp
-                )
-                * 1e-3
-            )
+            return gamma, Cp, W, 0.0
 
-            dW_dx = 0.0
-
-            return gamma, Cp, W, dW_dx
-
-        # ----------------------------------------------------------
-        # Heat release source term
-        # ----------------------------------------------------------
         def source_fn(x, mdot_local):
+            eta = mixing_efficiency(x)
 
-            # no more fuel injection
-            dmdot_dx = 0.0
+            dH_dx = eta * mfuel * LHV / (L_34 * mdot_local)
+            return dH_dx, 0.0
 
-            # local mixing efficiency
-            eta_mix = mixing_efficiency(x)
-
-            # heat release distributed along combustor
-            q_total = eta_mix * mfuel * LHV
-
-            dH_dx = q_total / (L_34 * mdot_local)
-
-            return dH_dx, dmdot_dx
-
-        # ----------------------------------------------------------
-        # Integrate Shapiro equations
-        # ----------------------------------------------------------
         result = self.shapiroODE.integrate(
-            x_start = 0.0,
-            x_end   = L_34,
-
-            Ma2_in  = Ma3**2,
-
-            p_in    = p3,
-
-            T_in    = T3,
-
-            mdot_in = mdot,
-
-            geometry_fn = geometry_fn,
-
-            thermo_fn = thermo_fn,
-
-            source_fn = source_fn,
-
-            Cf = cf,
-
-            n_steps = n_steps,
+            x_start=0.0,
+            x_end=L_34,
+            Ma2_in=Ma3**2,
+            p_in=p3,
+            T_in=T3,
+            mdot_in=mdot,
+            geometry_fn=geometry_fn,
+            thermo_fn=thermo_fn,
+            source_fn=source_fn,
+            Cf=self.CF_DEFAULT,
+            n_steps=400,
         )
 
-        # ----------------------------------------------------------
-        # Extract outlet state
-        # ----------------------------------------------------------
-        Ma4  = result["Ma"][-1]
-
-        T4   = result["T"][-1]
-
-        p4   = result["p"][-1]
-
-        rho4 = result["rho"][-1]
-
-        V4   = result["V"][-1]
-
-        Tt4  = result["Tt"][-1]
-
-        Pt4  = result["Pt"][-1]
-
-        gamma4 = self.air.specific_heat_ratio(T4, p4)
-
-        cp4 = self.air.specific_cp(T4, p4)
-
-        R4 = self.air.specific_R(T4, p4)
-
         return {
-            "Ma4": Ma4,
-            "T4": T4,
-            "Tt4": Tt4,
-            "p4": p4,
-            "pt4": Pt4,
-            "rho4": rho4,
-            "V4": V4,
+            "Ma4": result["Ma"][-1],
+            "T4": result["T"][-1],
+            "p4": result["p"][-1],
+            "rho4": result["rho"][-1],
+            "V4": result["V"][-1],
+            "Tt4": result["Tt"][-1],
+            "Pt4": result["Pt"][-1],
             "A4": A4,
-            "gamma4": gamma4,
-            "cp4": cp4,
-            "R4": R4,
             "mdot": mdot,
             "solution": result,
         }
-  
 
 
 
@@ -1017,48 +775,149 @@ def print_section(title, props, fields):
 
 
 if __name__ == "__main__":
-    eng  = Engine()
 
-    # ── flight condition ──────────────────────────────────────────────
-    h_km = 30.0          # altitude [km]  — paper uses 30 km as example
-    Ma0  = 5.0           # flight Mach number
-    mdot = 143.0           # air mass-flow rate [kg/s]  (paper normalises to 1 kg/s)
+    eng = Engine()
 
-    # ── Section 0 : freestream / inlet entrance ───────────────────────
-    inp = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=mdot)
+    # ----------------------------------------------------------
+    # Flight condition
+    # ----------------------------------------------------------
+    h_km = 30.0
 
-    print_section("SECTION 0 — Freestream (inlet entrance)", inp, [
-        ("Altitude",               "—",     "km",   1e-3),   # placeholder
-        ("Flight Mach number",     "Ma",    "—",    1.0),
-        ("Static temperature T₀",  "T0",    "K",    1.0),
-        ("Static pressure P₀",     "P0",    "kPa",  1e-3),
-        ("Air density ρ₀",         "rho0",  "kg/m³",1.0),
-        ("Specific heat ratio γ₀", "gamma0","—",    1.0),
-        ("Speed of sound a₀",      "a0",    "m/s",  1.0),
-        ("Flight velocity V₀",     "V0",    "m/s",  1.0),
-        ("Capture area A₀",        "A0",    "m²",   1.0),
-        ("Total temperature Tt₀",  "Tt0",   "K",    1.0),
-        ("Total pressure Pt₀",     "Pt0",   "kPa",  1e-3),
-        ("Mass-flow rate ṁ",       "mdot",  "kg/s", 1.0),
-    ])
+    Ma0 = 5.0
 
-    # fix the altitude row (not stored in dict, just display)
-    # ── Section 1 : isolator entrance ────────────────────────────────
-    iso = eng.isolator_properties(inp)
+    mdot = 143.0
 
-    print_section("SECTION 1 — Isolator entrance (combustor inlet)", iso, [
-        ("Mach number Ma₁",        "Ma1",    "—",    1.0),
-        ("Static temperature T₁",  "T1",     "K",    1.0),
-        ("Total temperature Tt₁",  "Tt1",    "K",    1.0),
-        ("Static pressure p₁",     "p1",     "kPa",  1e-3),
-        ("Total pressure pt₁",     "pt1",    "kPa",  1e-3),
-        ("Velocity V₁",            "V1",     "m/s",  1.0),
-        ("Density ρ₁",             "rho1",   "kg/m³",1.0),
-        ("Area A₁",                "A1",     "m²",   1.0),
-        ("Specific heat ratio γ₁", "gamma1", "—",    1.0),
-        ("Spec. heat cp₁",         "cp1",    "J/kg/K",1.0),
-        ("Gas constant R₁",        "R1",     "J/kg/K",1.0),
-        ("Pressure recovery σc",   "sigma_c","—",    1.0),
-    ])
+    # ----------------------------------------------------------
+    # SECTION 0
+    # Freestream
+    # ----------------------------------------------------------
+    sec0 = eng.inlet_properties(
+        h=h_km * 1e3,
+        Ma=Ma0,
+        m_air=mdot,
+    )
 
-    print(f"\n  [Altitude = {h_km:.1f} km,  Ma₀ = {Ma0},  ṁ = {mdot} kg/s]\n")
+    print_section(
+        "SECTION 0 — Freestream / Inlet Entrance",
+        sec0,
+        [
+            ("Flight Mach number",     "Ma",     "—",       1.0),
+            ("Static temperature T0",  "T0",     "K",       1.0),
+            ("Static pressure P0",     "P0",     "kPa",     1e-3),
+            ("Air density rho0",       "rho0",   "kg/m³",   1.0),
+            ("Specific heat ratio",    "gamma0", "—",       1.0),
+            ("Speed of sound a0",      "a0",     "m/s",     1.0),
+            ("Flight velocity V0",     "V0",     "m/s",     1.0),
+            ("Capture area A0",        "A0",     "m²",      1.0),
+            ("Total temperature Tt0",  "Tt0",    "K",       1.0),
+            ("Total pressure Pt0",     "Pt0",    "kPa",     1e-3),
+            ("Mass-flow rate mdot",    "mdot",   "kg/s",    1.0),
+        ]
+    )
+
+    # ----------------------------------------------------------
+    # SECTION 1
+    # Isolator exit / combustor inlet
+    # ----------------------------------------------------------
+    sec1 = eng.isolator_properties(sec0)
+
+    print_section(
+        "SECTION 1 — Isolator Exit",
+        sec1,
+        [
+            ("Mach number Ma1",        "Ma1",    "—",       1.0),
+            ("Static temperature T1",  "T1",     "K",       1.0),
+            ("Total temperature Tt1",  "Tt1",    "K",       1.0),
+            ("Static pressure p1",     "p1",     "kPa",     1e-3),
+            ("Total pressure pt1",     "pt1",    "kPa",     1e-3),
+            ("Velocity V1",            "V1",     "m/s",     1.0),
+            ("Density rho1",           "rho1",   "kg/m³",   1.0),
+            ("Area A1",                "A1",     "m²",      1.0),
+            ("Specific heat ratio",    "gamma1", "—",       1.0),
+            ("Specific heat cp1",      "cp1",    "J/kg/K",  1.0),
+            ("Gas constant R1",        "R1",     "J/kg/K",  1.0),
+        ]
+    )
+
+    # ----------------------------------------------------------
+    # SECTION 2
+    # Diverging pre-injection duct
+    # ----------------------------------------------------------
+    sec2 = eng.combustor_properties2(sec1)
+
+    print_section(
+        "SECTION 2 — Pre-Injection Diverging Duct",
+        sec2,
+        [
+            ("Mach number Ma2",        "Ma2",    "—",       1.0),
+            ("Static temperature T2",  "T2",     "K",       1.0),
+            ("Total temperature Tt2",  "Tt2",    "K",       1.0),
+            ("Static pressure p2",     "p2",     "kPa",     1e-3),
+            ("Total pressure pt2",     "pt2",    "kPa",     1e-3),
+            ("Velocity V2",            "V2",     "m/s",     1.0),
+            ("Density rho2",           "rho2",   "kg/m³",   1.0),
+            ("Area A2",                "A2",     "m²",      1.0),
+            ("Specific heat ratio",    "gamma2", "—",       1.0),
+            ("Specific heat cp2",      "cp2",    "J/kg/K",  1.0),
+            ("Gas constant R2",        "R2",     "J/kg/K",  1.0),
+        ]
+    )
+
+    # ----------------------------------------------------------
+    # SECTION 3
+    # Fuel injection region
+    # ----------------------------------------------------------
+    sec3 = eng.combustor_properties3(sec2)
+
+    print_section(
+        "SECTION 3 — Fuel Injection Region",
+        sec3,
+        [
+            ("Mach number Ma3",        "Ma3",    "—",       1.0),
+            ("Static temperature T3",  "T3",     "K",       1.0),
+            ("Total temperature Tt3",  "Tt3",    "K",       1.0),
+            ("Static pressure p3",     "p3",     "kPa",     1e-3),
+            ("Total pressure pt3",     "pt3",    "kPa",     1e-3),
+            ("Velocity V3",            "V3",     "m/s",     1.0),
+            ("Density rho3",           "rho3",   "kg/m³",   1.0),
+            ("Area A3",                "A3",     "m²",      1.0),
+            ("Mass flow mdot",         "mdot",   "kg/s",    1.0),
+            ("Injected fuel mass",     "mfuel",  "kg/s",    1.0),
+            ("Specific heat ratio",    "gamma3", "—",       1.0),
+            ("Specific heat cp3",      "cp3",    "J/kg/K",  1.0),
+            ("Gas constant R3",        "R3",     "J/kg/K",  1.0),
+        ]
+    )
+
+    # ----------------------------------------------------------
+    # SECTION 4
+    # Combustion region
+    # ----------------------------------------------------------
+    sec4 = eng.combustor_properties4(sec3)
+
+    print_section(
+        "SECTION 4 — Combustion Region",
+        sec4,
+        [
+            ("Mach number Ma4",        "Ma4",    "—",       1.0),
+            ("Static temperature T4",  "T4",     "K",       1.0),
+            ("Total temperature Tt4",  "Tt4",    "K",       1.0),
+            ("Static pressure p4",     "p4",     "kPa",     1e-3),
+            ("Total pressure pt4",     "pt4",    "kPa",     1e-3),
+            ("Velocity V4",            "V4",     "m/s",     1.0),
+            ("Density rho4",           "rho4",   "kg/m³",   1.0),
+            ("Area A4",                "A4",     "m²",      1.0),
+            ("Specific heat ratio",    "gamma4", "—",       1.0),
+            ("Specific heat cp4",      "cp4",    "J/kg/K",  1.0),
+            ("Gas constant R4",        "R4",     "J/kg/K",  1.0),
+        ]
+    )
+
+    # ----------------------------------------------------------
+    # Summary
+    # ----------------------------------------------------------
+    print(
+        f"\n  [Altitude = {h_km:.1f} km, "
+        f"Ma0 = {Ma0:.2f}, "
+        f"mdot = {mdot:.2f} kg/s]\n"
+    )
