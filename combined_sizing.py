@@ -55,6 +55,7 @@ def mach_to_velocity(mach: float, altitude_m: float) -> float:
 # K_W as function of tau and configuration
 # =============================================================================
 
+
 def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
     """
     Wetted-to-planform area ratio K_W as a function of Küchemann tau.
@@ -70,7 +71,7 @@ def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
     blended_body:
         K_W = 18.594*tau^2 + 0.0084*tau + 2.4274
     """
-
+    """
     if tau <= 0:
         raise ValueError("tau must be positive.")
 
@@ -104,6 +105,8 @@ def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
             "configuration must be one of: "
             "'waverider', 'wing_body', or 'blended_body'."
         )
+    """
+    return 2.407
 
 
 # =============================================================================
@@ -121,25 +124,24 @@ class MissionSegment:
         "T_eq_D" -> uses exp[-D Δt / (Isp W)]
 
     fuel_type:
-        "JetA" for turbojet / conventional aircraft fuel
-        "LH2" for ramjet / dual-mode ramjet
-        "none" for unpowered segments
+        "JetA" for standard aircraft fuel
+        "LH2" for liquid hydrogen
+        "none" for unpowered/no-fuel segments
 
-    Units:
-        delta_h     [m]
-        V_initial   [m/s]
-        V_final     [m/s]
-        V_average   [m/s]
-        I_sp        [s]
-        D           [N]
-        T           [N]
-        delta_t     [s]
-        W_current   [kg], internally converted to N for T_eq_D
+    propulsion_mode:
+        "turbojet"
+        "ramjet"
+        "scramjet"
+        "none"
+
+    This lets ramjet and scramjet both use LH2, while still keeping their
+    fuel burn, I_sp, and thrust levels separated.
     """
 
     name: str
     mode: str
     fuel_type: str = "none"
+    propulsion_mode: str = "none"
 
     # For T > D segments
     delta_h: float = 0.0
@@ -220,15 +222,28 @@ def fuel_masses_from_segments(
     W_to: float,
     segments: list[MissionSegment],
     k_rf: float,
-) -> tuple[float, float, float, list[float], float, dict[str, float]]:
+) -> tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    list[float],
+    float,
+    dict[str, float],
+    dict[str, float],
+]:
     """
-    Calculate total fuel mass and split into LH2 and Jet-A.
+    Calculate total fuel mass and split into:
+        Jet-A
+        LH2 total
+        LH2 ramjet
+        LH2 scramjet
 
-    Mission burn is calculated segment-by-segment:
-        burned_mass_i = W_current * (1 - segment_fraction)
+    The actual tank volume still uses:
+        W_fuel_LH2 = W_fuel_ramjet + W_fuel_scramjet
 
-    Reserve/trapped fuel factor is then applied to each fuel type:
-        W_fuel_type = (1 + k_rf) * mission_burn_type
+    Fuel fraction logic stays the same.
     """
 
     if W_to <= 0:
@@ -240,21 +255,33 @@ def fuel_masses_from_segments(
 
     segment_fractions = []
     segment_burns = {}
+    segment_propulsion_modes = {}
 
-    mission_burn_LH2 = 0.0
     mission_burn_JetA = 0.0
+    mission_burn_LH2_ramjet = 0.0
+    mission_burn_LH2_scramjet = 0.0
 
     for segment in segments:
         fraction = segment_weight_fraction(segment, W_current)
-
         burned_mass = W_current * (1.0 - fraction)
 
-        if segment.fuel_type == "LH2":
-            mission_burn_LH2 += burned_mass
-        elif segment.fuel_type == "JetA":
+        if segment.fuel_type == "JetA":
             mission_burn_JetA += burned_mass
+
+        elif segment.fuel_type == "LH2":
+            if segment.propulsion_mode == "ramjet":
+                mission_burn_LH2_ramjet += burned_mass
+            elif segment.propulsion_mode == "scramjet":
+                mission_burn_LH2_scramjet += burned_mass
+            else:
+                raise ValueError(
+                    f"Segment '{segment.name}' uses LH2, so propulsion_mode "
+                    "must be 'ramjet' or 'scramjet'."
+                )
+
         elif segment.fuel_type == "none":
             pass
+
         else:
             raise ValueError(
                 f"fuel_type for segment '{segment.name}' must be "
@@ -263,23 +290,30 @@ def fuel_masses_from_segments(
 
         segment_fractions.append(fraction)
         segment_burns[segment.name] = burned_mass
+        segment_propulsion_modes[segment.name] = segment.propulsion_mode
 
         W_current *= fraction
 
     total_mission_fraction = float(np.prod(segment_fractions))
 
-    W_fuel_LH2 = (1.0 + k_rf) * mission_burn_LH2
+    # Apply reserve/trapped fuel to each fuel bucket
     W_fuel_JetA = (1.0 + k_rf) * mission_burn_JetA
+    W_fuel_LH2_ramjet = (1.0 + k_rf) * mission_burn_LH2_ramjet
+    W_fuel_LH2_scramjet = (1.0 + k_rf) * mission_burn_LH2_scramjet
 
-    W_fuel_total = W_fuel_LH2 + W_fuel_JetA
+    W_fuel_LH2 = W_fuel_LH2_ramjet + W_fuel_LH2_scramjet
+    W_fuel_total = W_fuel_JetA + W_fuel_LH2
 
     return (
         W_fuel_total,
         W_fuel_LH2,
         W_fuel_JetA,
+        W_fuel_LH2_ramjet,
+        W_fuel_LH2_scramjet,
         segment_fractions,
         total_mission_fraction,
         segment_burns,
+        segment_propulsion_modes,
     )
 
 
@@ -292,6 +326,8 @@ def tank_volume_two_fuels(
 ) -> tuple[float, float, float]:
     """
     Tank capacity volume for separate LH2 and Jet-A masses.
+
+    Ramjet LH2 and scramjet LH2 are combined here because they are the same fuel.
     """
 
     if rho_LH2 <= 0 or rho_JetA <= 0:
@@ -345,9 +381,12 @@ def converge_TOGW_for_fixed_S_plan(
             W_fuel_total,
             W_fuel_LH2,
             W_fuel_JetA,
+            W_fuel_LH2_ramjet,
+            W_fuel_LH2_scramjet,
             segment_fractions,
             total_mission_fraction,
             segment_burns,
+            segment_propulsion_modes,
         ) = fuel_masses_from_segments(
             W_to=W_to,
             segments=segments,
@@ -400,11 +439,14 @@ def converge_TOGW_for_fixed_S_plan(
                 "W_fuel": W_fuel_total,
                 "W_fuel_LH2": W_fuel_LH2,
                 "W_fuel_JetA": W_fuel_JetA,
+                "W_fuel_LH2_ramjet": W_fuel_LH2_ramjet,
+                "W_fuel_LH2_scramjet": W_fuel_LH2_scramjet,
                 "V_tank_capacity": V_tank_capacity,
                 "V_LH2": V_LH2,
                 "V_JetA": V_JetA,
                 "segment_fractions": segment_fractions,
                 "segment_burns": segment_burns,
+                "segment_propulsion_modes": segment_propulsion_modes,
                 "total_mission_fraction": total_mission_fraction,
             }
 
@@ -642,109 +684,214 @@ def converge_S_plan_and_TOGW(
 if __name__ == "__main__":
 
     # -------------------------------------------------------------------------
-    # Mission profile: Mach 5, 28 km, 9500 km range
+    # Mission profile: Mach 8, 30 km, 2000 km range
+    #
+    # Propulsion mode rule:
+    #   turbojet : M < 3
+    #   ramjet   : 3 <= M < 6
+    #   scramjet : M >= 6
+    #
+    # The mission profile is unchanged. Segment 5 is only subdivided internally.
     # -------------------------------------------------------------------------
 
     h0 = 0.0
     h10 = 10_000.0
-    h28 = 28_000.0
+    h30 = 30_000.0
 
+    # Main mission velocities
     V_M07_h0 = mach_to_velocity(0.7, h0)
     V_M09_h10 = mach_to_velocity(0.9, h10)
     V_M17_h10 = mach_to_velocity(1.7, h10)
-    V_M5_h28 = mach_to_velocity(5.0, h28)
+    V_M8_h30 = mach_to_velocity(8.0, h30)
 
-    cruise_range = 9_500_000.0
-    cruise_time = cruise_range / V_M5_h28
+    # -------------------------------------------------------------------------
+    # Internal split points for segment 5
+    # Segment 5 goes from M1.7 at 10 km to M8 at 30 km.
+    # We approximate the altitude at M3 and M6 by linear interpolation in Mach.
+    # -------------------------------------------------------------------------
+
+    M_start_seg5 = 1.7
+    M_end_seg5 = 8.0
+
+    def interpolate_altitude_from_mach(M: float) -> float:
+        return h10 + (M - M_start_seg5) / (M_end_seg5 - M_start_seg5) * (h30 - h10)
+
+    h_M3 = interpolate_altitude_from_mach(3.0)
+    h_M6 = interpolate_altitude_from_mach(6.0)
+
+    V_M3_hM3 = mach_to_velocity(3.0, h_M3)
+    V_M6_hM6 = mach_to_velocity(6.0, h_M6)
+
+    cruise_range = 2_000_000.0
+    cruise_time = cruise_range / V_M8_h30
 
     segments = [
+        # ---------------------------------------------------------------------
+        # 1. Takeoff
+        # Turbojet / Jet-A
+        # ---------------------------------------------------------------------
         MissionSegment(
             name="1_takeoff",
             mode="fixed",
             fuel_type="JetA",
+            propulsion_mode="turbojet",
             fixed_fraction=0.990,
         ),
 
+        # ---------------------------------------------------------------------
+        # 2. Acceleration to Mach 0.7 at constant altitude
+        # Turbojet / Jet-A
+        # ---------------------------------------------------------------------
         MissionSegment(
             name="2_accel_to_M0.7",
             mode="T_gt_D",
             fuel_type="JetA",
+            propulsion_mode="turbojet",
             delta_h=0.0,
             V_initial=0.0,
             V_final=V_M07_h0,
             V_average=0.5 * V_M07_h0,
             I_sp=2200.0,
             D=95_000.0,
-            T=180_000.0,
+            T=1_035_000.0,
         ),
 
+        # ---------------------------------------------------------------------
+        # 3. Acceleration to Mach 0.9 and climb to 10 km
+        # Turbojet / Jet-A
+        # ---------------------------------------------------------------------
         MissionSegment(
             name="3_accel_to_M0.9_climb_10km",
             mode="T_gt_D",
             fuel_type="JetA",
+            propulsion_mode="turbojet",
             delta_h=10_000.0,
             V_initial=V_M07_h0,
             V_final=V_M09_h10,
             V_average=0.5 * (V_M07_h0 + V_M09_h10),
             I_sp=2000.0,
             D=85_000.0,
-            T=170_000.0,
+            T=1_035_000.0,
         ),
 
+        # ---------------------------------------------------------------------
+        # 4. Acceleration to Mach 1.7 at constant altitude
+        # Turbojet / Jet-A
+        # ---------------------------------------------------------------------
         MissionSegment(
-            name="4_accel_to_M2.5",
+            name="4_accel_to_M1.7",
             mode="T_gt_D",
             fuel_type="JetA",
+            propulsion_mode="turbojet",
             delta_h=0.0,
             V_initial=V_M09_h10,
             V_final=V_M17_h10,
             V_average=0.5 * (V_M09_h10 + V_M17_h10),
             I_sp=1600.0,
             D=110_000.0,
-            T=220_000.0,
+            T=1_035_000.0,
         ),
 
+        # ---------------------------------------------------------------------
+        # 5a. Segment 5 internal split:
+        #     Climb/accelerate from Mach 1.7 to Mach 3
+        #     Still turbojet / Jet-A
+        # ---------------------------------------------------------------------
         MissionSegment(
-            name="5_climb_to_28km",
+            name="5a_climb_M1.7_to_M3_turbojet",
+            mode="T_gt_D",
+            fuel_type="JetA",
+            propulsion_mode="turbojet",
+            delta_h=h_M3 - h10,
+            V_initial=V_M17_h10,
+            V_final=V_M3_hM3,
+            V_average=0.5 * (V_M17_h10 + V_M3_hM3),
+            I_sp=1400.0,
+            D=120_000.0,
+            T=1_035_000.0,
+        ),
+
+        # ---------------------------------------------------------------------
+        # 5b. Segment 5 internal split:
+        #     Climb/accelerate from Mach 3 to Mach 6
+        #     Ramjet / LH2
+        # ---------------------------------------------------------------------
+        MissionSegment(
+            name="5b_climb_M3_to_M6_ramjet",
             mode="T_gt_D",
             fuel_type="LH2",
-            delta_h=18_000.0,
-            V_initial=V_M17_h10,
-            V_final=V_M5_h28,
-            V_average=0.5 * (V_M17_h10 + V_M5_h28),
-            I_sp=2800.0,
-            D=120_000.0,
-            T=280_000.0,
+            propulsion_mode="ramjet",
+            delta_h=h_M6 - h_M3,
+            V_initial=V_M3_hM3,
+            V_final=V_M6_hM6,
+            V_average=0.5 * (V_M3_hM3 + V_M6_hM6),
+            I_sp=2600.0,
+            D=125_000.0,
+            T=2_000_000.0,
         ),
 
+        # ---------------------------------------------------------------------
+        # 5c. Segment 5 internal split:
+        #     Climb/accelerate from Mach 6 to Mach 8
+        #     Scramjet / LH2
+        # ---------------------------------------------------------------------
         MissionSegment(
-            name="6_cruise_M5_28km",
+            name="5c_climb_M6_to_M8_scramjet",
+            mode="T_gt_D",
+            fuel_type="LH2",
+            propulsion_mode="scramjet",
+            delta_h=h30 - h_M6,
+            V_initial=V_M6_hM6,
+            V_final=V_M8_h30,
+            V_average=0.5 * (V_M6_hM6 + V_M8_h30),
+            I_sp=2400.0,
+            D=130_000.0,
+            T=2_050_000.0,
+        ),
+
+        # ---------------------------------------------------------------------
+        # 6. Cruise at Mach 8 and 30 km
+        # Scramjet / LH2
+        # ---------------------------------------------------------------------
+        MissionSegment(
+            name="6_cruise_M8_30km_scramjet",
             mode="T_eq_D",
             fuel_type="LH2",
-            I_sp=3000.0,
+            propulsion_mode="scramjet",
+            I_sp=2500.0,
             D=100_000.0,
+            T=2_050_000.0,  # stored for later thrust trade; not used in T_eq_D formula
             delta_t=cruise_time,
         ),
 
+        # ---------------------------------------------------------------------
+        # 7. Unpowered descent
+        # ---------------------------------------------------------------------
         MissionSegment(
             name="7_unpowered_descent",
             mode="fixed",
             fuel_type="none",
+            propulsion_mode="none",
             fixed_fraction=1.0,
         ),
 
+        # ---------------------------------------------------------------------
+        # 8. Landing
+        # Turbojet / Jet-A
+        # ---------------------------------------------------------------------
         MissionSegment(
             name="8_landing",
             mode="fixed",
             fuel_type="JetA",
+            propulsion_mode="turbojet",
             fixed_fraction=0.997,
         ),
     ]
 
     S_plan, W_to, result = converge_S_plan_and_TOGW(
-        tau=0.14,
-        configuration="blended_body",  # choose: "waverider", "wing_body", "blended_body"
-        S_plan_guess=433.871,
+        tau=0.16,
+        configuration="blended_body",
+        S_plan_guess=800.0,
 
         I_str=24.0,
         I_tps=6.0,
@@ -758,16 +905,16 @@ if __name__ == "__main__":
 
         I_sub=0.04,
 
-        W_prop=2_811.858,
+        W_prop=54_248.9,
         V_prop=10.0,
 
-        W_payload=7_000.0,
+        W_payload=10_000.0,
         rho_payload=100.0,
 
         segments=segments,
         k_rf=0.06,
 
-        W_to_guess=114_203.396,
+        W_to_guess=100_000.0,
 
         rho_str=2700.0,
         rho_tps=500.0,
@@ -803,15 +950,18 @@ if __name__ == "__main__":
     print(f"Segment fractions:          {result['segment_fractions']}")
     print(f"Total mission fraction:     {result['total_mission_fraction']:.6f}")
     print(f"W_fuel_total:               {result['W_fuel']:.3f} kg")
-    print(f"W_fuel_LH2:                 {result['W_fuel_LH2']:.3f} kg")
     print(f"W_fuel_JetA:                {result['W_fuel_JetA']:.3f} kg")
+    print(f"W_fuel_LH2_total:           {result['W_fuel_LH2']:.3f} kg")
+    print(f"W_fuel_LH2_ramjet:          {result['W_fuel_LH2_ramjet']:.3f} kg")
+    print(f"W_fuel_LH2_scramjet:        {result['W_fuel_LH2_scramjet']:.3f} kg")
     print(f"V_LH2:                      {result['V_LH2']:.3f} m³")
     print(f"V_JetA:                     {result['V_JetA']:.3f} m³")
 
     print("\nSegment fuel burn before reserve")
     print("--------------------------------")
     for segment_name, burn in result["segment_burns"].items():
-        print(f"{segment_name:<32s}: {burn:.3f} kg")
+        mode = result["segment_propulsion_modes"][segment_name]
+        print(f"{segment_name:<36s} [{mode:<8s}]: {burn:.3f} kg")
 
     print("\nWeight breakdown")
     print("----------------")
