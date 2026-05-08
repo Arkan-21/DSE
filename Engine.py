@@ -267,16 +267,15 @@ class Atmosphere:
         h : float
             Geometric altitude [m].
         gamma : float, optional
-            Specific heat ratio. Defaults to 1.4 (calorically perfect air).
-            Pass a real-gas gamma from AirProperties for accuracy.
         """
+        gamma = AirProperties.specific_heat_ratio(Atmosphere.T(h), Atmosphere.P(h))
         return np.sqrt(gamma * Atmosphere.R_AIR * Atmosphere.T(h))
 
 
 class ShapiroODE:
     """
     Quasi-1D Shapiro differential equations for a duct with area change,
-    heat addition, wall friction, and mass addition (Eqs. 15–17 in the paper).
+    heat addition, wall friction, and mass addition .
 
     All differentials are per unit streamwise step dx [m].
 
@@ -340,7 +339,7 @@ class ShapiroODE:
         dMa2_dx = (
             -2.0 * g1m2 / D1 * dA / A
             + (1.0 + gM2) / D1 * (dH / (Cp * T))
-            + gM2 * g1m2 / D1 * fric
+            + gM2 * g1m2 / D1 * fric                #dx is missing
             + 2.0 * (1.0 + gM2) * g1m2 / D1 * dm / mdot
             - (1.0 + gM2) / D1 * dW / W
             - (1.0 / g) * (g / (g - 1.0))           # -dγ/γ  ≈ 0 (frozen γ per step)
@@ -561,7 +560,92 @@ class Engine:
             "Tt0":   Tt0,
             "Pt0":   Pt0,
         }
+    
+    def compression_efficiency(self, n: int) -> float:
+        if n==4:
+            return 0.92
+        elif n==3:
+            return 0.88
+        elif n==2:
+            return 0.82
+        elif n==1:
+            return 0.72
 
+
+    def pressure_recovery(Ma: float) -> float:
+        """
+        Compute pressure recovery factor from inlet to isolator exit
+        using a polynomial fit of experimental data.
+        """
+
+        MaList = np.array([
+            8.126582278481013, 7.640506792672073, 7.245569156695016,
+            6.8658223212519776, 6.6075949367088604, 6.349367552165743,
+            6.136709092538568, 5.954429916188687, 5.75696225709553,
+            5.605063522918315, 5.4531647887411, 5.2860764129252376,
+            5.1645569620253164, 5.027847869486749
+        ])
+
+        pressure_recovery_coef = np.array([
+            0.3021505460144819, 0.31827957959571584, 0.333870966418766,
+            0.3505376467581838, 0.36344086131769493, 0.3774193693935738,
+            0.38870968469678685, 0.3999999897454365, 0.4123655985650173,
+            0.42311828761917336, 0.4338709766733293, 0.4451613022311057,
+            0.4543010920289637, 0.46612904383579723
+        ])
+
+        # Polynomial fit to the data (linear fit for simplicity; can be improved with higher-order polynomials)
+        coeffs = np.polyfit(MaList, pressure_recovery_coef, 1)
+        poly = np.poly1d(coeffs)
+
+        return float(poly(Ma))
+    
+    def isolator_properties(self, inlet_props: dict) -> dict:
+        
+        Ma0 = inlet_props["Ma"]
+        T0  = inlet_props["T0"]
+        P0  = inlet_props["P0"]
+        V0  = inlet_props["V0"]
+        Pt0 = inlet_props["Pt0"]
+        gamma0 = inlet_props["gamma0"]
+        R = 287.05  # J/kg·K for air
+
+        # Step 1: Ma1 from fixed epsilon (eq. 10, justified by T1 < 1560K limit)
+        epsilon = 0.4
+        M1 = epsilon * Ma0
+
+        # Step 2: Iteratively solve T1 from energy conservation (eq. 13)
+        Cp0 = gamma0 * R / (gamma0 - 1)
+        Ht0 = Cp0 * T0 + 0.5 * V0**2  # total enthalpy, conserved (adiabatic wall)
+
+        def energy_residual(T1_guess):
+            gamma1 = self.air.specific_heat_ratio(T1_guess, P0)
+            Cp1 = gamma1 * R / (gamma1 - 1)
+            V1 = M1 * np.sqrt(gamma1 * R * T1_guess)
+            return Ht0 - (Cp1 * T1_guess + 0.5 * V1**2)
+
+        T1 = fsolve(energy_residual, x0=1200.0)[0]
+
+        # Step 3: Derived quantities at section 1
+        gamma1 = self.air.specific_heat_ratio(T1, P0)
+        Cp1    = gamma1 * R / (gamma1 - 1)
+        V1     = M1 * np.sqrt(gamma1 * R * T1)
+        Tt1    = T0 * (1 + (gamma0 - 1) / 2 * Ma0**2) * Cp0 / Cp1  # total temp
+
+        # Step 4: Pressure recovery → p1, pt1
+        sigma_c = self.pressure_recovery(Ma0)   # ηc = 0.9, 4 shocks
+        pt1 = sigma_c * Pt0
+        p1  = pt1 * (T1 / Tt1) ** (gamma1 / (gamma1 - 1))
+
+        # Step 5: Density and area from mass conservation (eqs. 12, 14)
+        rho1 = p1 / (R * T1)
+        A1   = inlet_props["mdot"] / (rho1 * V1)
+
+        return {
+            "Ma": M1, "T1": T1, "Tt1": Tt1,
+            "p1": p1, "pt1": pt1, "V1": V1,
+            "A1": A1, "rho1": rho1, "gamma1": gamma1
+        }
 
 # =========
 if __name__ == "__main__":
