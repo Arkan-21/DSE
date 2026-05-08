@@ -1,3 +1,6 @@
+import math
+
+
 def T(h: float) -> float:
     """
     Temperature [K] at geopotential altitude h [m] per ISA Standard Atmosphere 1976.
@@ -30,6 +33,37 @@ def T(h: float) -> float:
     # h == 84,852 exactly
     return LAYERS[-1][1]
 
+def density(h: float) -> float:
+    """
+    Density [kg/m³] at geopotential altitude h [m] per ISA Standard Atmosphere 1976.
+    Valid range: 0 – 86,000 m. Raises ValueError outside that range.
+    """
+    # (h_base_m, T_base_K, lapse_rate_K_per_km, rho_base_kg_per_m3)
+    LAYERS = (
+        (     0,   288.150,  6.5, 1.2250),
+        (11_000,   216.650,  0.0, 0.3639),
+        (20_000,   216.650, -1.0, 0.088),
+        (32_000,   228.650, -2.8, 0.0132),
+        (47_000,   270.650,  0.0, 0.0014),
+        (51_000,   270.650,  2.8, 0.0009),
+        (71_000,   214.650,  2.0, 0.0001),
+        (84_852,   186.946,  0.0, 0.0), # Mesopause — upper boundary
+    )
+
+    if h < 0:
+        raise ValueError(f"Altitude {h} m is below sea level (h must be >= 0)")
+    if h > 86_000:
+        raise ValueError(f"Altitude {h} m exceeds model ceiling of 86,000 m")
+
+    for i in range(len(LAYERS) - 1):
+        h_base, T_base, lapse_K_per_km, rho_base = LAYERS[i]
+        h_top = LAYERS[i + 1][0]
+        if h < h_top:
+            if lapse_K_per_km == 0:
+                return rho_base * math.exp(-9.80665 * (h - h_base) / (287.05 * T_base))
+            else:
+                T = T_base + lapse_K_per_km * (h - h_base) / 1000
+                return rho_base * (T / T_base) ** (-9.80665 / (287.05 * lapse_K_per_km / 1000)-1)
 
 if __name__ == "__main__":
     checkpoints = [0, 11_000, 20_000, 32_000, 47_000, 51_000, 71_000, 84_852]
@@ -39,3 +73,7 @@ if __name__ == "__main__":
     for h, exp in zip(checkpoints, expected_K):
         got = T(h)
         print(f"{h:>8}  {got:>9.3f}  {exp:>9.3f}  {got - exp:>+8.4f}")
+
+    print(density(0))        # 1.2250 kg/m³
+    print(density(11_000))   # 0.3639 kg/m³
+    print(density(25_000))   # 0.088 kg/m³
