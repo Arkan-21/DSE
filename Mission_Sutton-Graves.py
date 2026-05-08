@@ -34,8 +34,6 @@ def equilibrium_temperature(q, emissivity):
 
 df = pd.read_csv(csv_file)
 
-df.columns = ["rho", "v"]
-
 # ── Compute all heat fluxes ──────────────────────────────────────────────────
 q_values = sutgrav(df["rho"], rad, df["v"])
 
