@@ -337,7 +337,7 @@ if __name__ == "__main__":
     # ── flight condition ──────────────────────────────────────────────
     h_km = 30.0          # altitude [km]  — paper uses 30 km as example
     Ma0  = 5.0           # flight Mach number
-    mdot = 1.0           # air mass-flow rate [kg/s]  (paper normalises to 1 kg/s)
+    mdot = 143.0           # air mass-flow rate [kg/s]  (paper normalises to 1 kg/s)
 
     # ── Section 0 : freestream / inlet entrance ───────────────────────
     inp = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=mdot)
