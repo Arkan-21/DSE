@@ -56,15 +56,16 @@ def compute_flight_profile(gamma,h_cruise,acc_tot=0.15*9.81,x_sample=-1):
 
 
 def run_sensitivity_study(gammas, heights, acc_tot=0.15*9.81, total_range=9500e3, x_sample=-1):
+    #clear the results file if it exists
+    with open('sensitivity_study_results.csv', 'w') as f:
+        f.write("gamma (deg),h_cruise (m),dx_to_cruise (m),cruise_cond_start_x (m),cruise_cond_end_x (m),dv_y_to_cruise (m/s),dv_x_to_cruise (m/s),v_at_h_cruise (m/s),V_cruise (m/s),a_cruise (m/s^2),density_sample (kg/m^3)\n")
     for gamma in gammas:
         for h_cruise in heights:
             dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, dv_y_to_cruise, dv_x_to_cruise, V_cruise, a_cruise, h_sample, v_sample, density_sample = compute_flight_profile(gamma,h_cruise,acc_tot,x_sample)
             v_at_h_cruise = np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
 
             with open('sensitivity_study_results.csv', 'a') as f:
-                if f.tell() == 0:  # if file is empty, write header
-                    f.write("gamma (deg),h_cruise (m),dx_to_cruise (m),cruise_cond_start_x (m),cruise_cond_end_x (m),dv_y_to_cruise (m/s),dv_x_to_cruise (m/s),v_at_h_cruise (m/s),V_cruise (m/s),a_cruise (m/s^2),density_sample (kg/m^3)\n")
-                f.write(f"{gamma},{h_cruise},{dx_to_cruise},{cruise_cond_start_x},{cruise_cond_end_x},{dv_y_to_cruise},{dv_x_to_cruise},{v_at_h_cruise},{V_cruise},{a_cruise},{density_sample}\n")
+               f.write(f"{gamma},{h_cruise},{dx_to_cruise},{cruise_cond_start_x},{cruise_cond_end_x},{dv_y_to_cruise},{dv_x_to_cruise},{v_at_h_cruise},{V_cruise},{a_cruise},{density_sample}\n")
 
 def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3, x_sample =-1,save=False, show=True):
 
@@ -360,6 +361,6 @@ if __name__ == "__main__":
     plot_mission_profile(gammas, heights, x_sample=x, save=False, show=True)    
 
     plot_mission_profile(gammas[1], heights[1], x_sample=x, save=False, show=True)
-    
+
 
     
