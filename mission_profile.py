@@ -358,7 +358,7 @@ if __name__ == "__main__":
 
     plot_mission_profile(gammas, heights, x_sample=x, save=False, show=False)
 
-    plot_mission_profile(gammas[1], heights[1], x_sample=x, save=False, show=False)
+    plot_mission_profile(gammas[1], heights[2], x_sample=x, save=False, show=True)
     
 
     
