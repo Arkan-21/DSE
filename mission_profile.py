@@ -1,5 +1,4 @@
 import warnings as warn
-
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
@@ -353,13 +352,13 @@ if __name__ == "__main__":
     heights = [25e3, 30e3, 35e3]  # cruise altitudes in metres
     
     x = 10e3  # 10 km
-    plot_mission_profile(gammas, heights[1], x_sample=x,save=False, show=True)
+    plot_mission_profile(gammas, heights[1], x_sample=x,save=False, show=False)
 
-    plot_mission_profile(gammas[0], heights,x_sample=x, save=False, show=True)
+    plot_mission_profile(gammas[0], heights,x_sample=x, save=False, show=False)
 
-    plot_mission_profile(gammas, heights, x_sample=x, save=False, show=True)    
+    plot_mission_profile(gammas, heights, x_sample=x, save=False, show=False)
 
-    plot_mission_profile(gammas[1], heights[1], x_sample=x, save=False, show=True)
+    plot_mission_profile(gammas[1], heights[2], x_sample=x, save=False, show=True)
     
 
     
