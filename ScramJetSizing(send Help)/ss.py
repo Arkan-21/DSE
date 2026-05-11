@@ -804,20 +804,7 @@ class Engine:
             "solution": result,
         }
 
-        return {
-            "Ma3": result["Ma"][-1],
-            "T3": result["T"][-1],
-            "p3": result["p"][-1],
-            "rho3": result["rho"][-1],
-            "V3": result["V"][-1],
-            "Tt3": result["Tt"][-1],
-            "Pt3": result["Pt"][-1],
-            "A3": A3,
-            "mdot": result["mdot"][-1],
-            "mfuel": mfuel_total,
-            "phi": phi,
-            "solution": result,
-        }
+ 
 
     def combustor_properties4(self, combustor_properties3):
         """Section 3→4: Combustion (heat release, no mass addition)"""
@@ -829,7 +816,7 @@ class Engine:
 
         Ma3 = self._f(combustor_properties3["Ma3"])
         T3 = self._f(combustor_properties3["T3"])
-        p3 = self._f(combustor_properties3["p3"])
+        p3 = self._f(combustor_properties3["P3"])
 
         mdot = self._f(combustor_properties3["mdot"])
         mfuel = self._f(combustor_properties3["mfuel"])
@@ -906,8 +893,8 @@ class Engine:
 
         L_45 = self._f(self.L45)
 
-        A4 = self._f(combustor_properties4["A4"])
-        A0 = self._f(inlet_props["A0"])
+        A4 = self._f(combustor_properties4["A"])
+        A0 = self._f(inlet_props["A"])
         A5 = self._f(self.alpha05) * A0
 
         Ma4 = self._f(combustor_properties4["Ma4"])
