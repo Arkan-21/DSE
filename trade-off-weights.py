@@ -226,59 +226,75 @@ def entropy_weights(matrix, verbose=True):
         "variability": CV
     }
 
-def final_weights(results_ahp,results_entropy, verbose=True):
+def final_weights(matrix_entropy,results_ahp,results_entropy, verbose=True):
     final_weights = np.zeros(len(results_entropy['variability']))
     beta_list = np.zeros(len(results_entropy['variability']))
+    final_weights_norm = np.zeros(len(results_entropy['variability']))
     for i in range(len(results_entropy['variability'])):
         if results_entropy['variability'][i] < 0.1:
-            beta = 0.7
+            beta = 1
         elif 0.1 <= results_entropy['variability'][i] <= 0.3:
-            beta = 0.5
+            beta = 0.8
         elif results_entropy['variability'][i] > 0.3:
-            beta = 0.3
+            beta = 0.6
+
 
     
         final_weights[i] = beta*results_ahp['weights'][i] + (1-beta)*results_entropy['weights'][i]
         beta_list[i] = beta
 
-    print(final_weights, beta_list)
+    for i in range(len(final_weights)):
+        final_weights_norm[i] = final_weights[i]/np.sum(final_weights)
 
-    return final_weights
+    return final_weights_norm, beta_list
 
         
 # ======================================================
 # EXAMPLE USAGE
 # ======================================================
 
-matrix_ahp = [
-    [1.0, 0.5, 2.0, 4.0, 10.0],
-    [2.0, 1.0, 2.0, 2.0, 4.0],
-    [0.5, 0.5, 1.0, 2.0, 3.0],
-    [0.25, 0.5, 0.5, 1.0, 2.0],
-    [0.1, 0.25, 1/3, 0.5, 1.0]
-]
+matrix_ahp = np.matrix([
+    [1,    1,    1/2, 1/4, 1/2, 2,   4],
+    [1,    1,    1/2, 1/4, 1/2, 2,   4],
+    [2,    2,    1,   1/3, 2,   3,   5],
+    [4,    4,    3,   1,   4,   5,   7],
+    [2,    2,    1/2, 1/4, 1,   3,   5],
+    [1/2,  1/2,  1/3, 1/5, 1/3, 1,   3],
+    [1/4,  1/4,  1/5, 1/7, 1/5, 1/3, 1]
+])
 
 criteria = [
     "Safety",
-    "Energy density",
+    "Volumetric energy density",
+    "Gravimetric energy density",
     "Cooling",
-    "Combustibility",
-    "Sustainability"
+    "Combustion stability",
+    "Sustainability",
+    "Cost"
 ]
 
-results_ahp = ahp_weights(matrix_ahp, criteria,verbose=False)
+results_ahp = ahp_weights(matrix_ahp, criteria,verbose=True)
 
-matrix_entropy = [
-    [102, 120, 9,12,60],
-    [100, 100, 5,14,45],
-    [104, 140, 8,10,60]
-]
+##Make sure this matrix has equal columns as criteria. If a criteria does not have
+###put 1's for the entire column
+matrix_entropy = np.array([
+    [1,   9,   120, 1, 1, 1, 6.1],
+    [1,   34,  43,  1, 1, 1, 3.95],
+    [1,   37,  51,  1, 1, 1, 6.8],
+    [1,   39.6, 43,  1, 1, 1, 3.48]]
+    )
 
-results_entropy = entropy_weights(matrix_entropy,verbose=False)
+results_entropy = entropy_weights(matrix_entropy,verbose=True)
 
-results_final = final_weights(results_ahp,results_entropy)
 
-print(results_entropy['weights'],results_ahp['weights'])
+results_final = final_weights(matrix_entropy,results_ahp,results_entropy)
+
+
+
+
+
+
+
 
 
 

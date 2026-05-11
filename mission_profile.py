@@ -1,6 +1,9 @@
 import warnings as warn
+<<<<<<< HEAD
 warn.formatwarning = lambda msg, *_, **__: f"Warning: {msg}\n"
 
+=======
+>>>>>>> 449f7c1e7323f886de5ff87aa1ba6c9cf4b6c47b
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
@@ -73,7 +76,13 @@ def run_sensitivity_study(gammas, heights, acc_tot=0.15*9.81, total_range=9500e3
             final_total_range = cruise_cond_end_x + x_descent
 
             with open('sensitivity_study_results.csv', 'a') as f:
+<<<<<<< HEAD
                f.write(f"{gamma},{h_cruise},{dx_to_cruise},{cruise_cond_start_x},{cruise_cond_end_x},{dv_y_to_cruise},{dv_x_to_cruise},{v_at_h_cruise},{V_cruise},{a_cruise},{density_sample},{a_descent},{final_total_range}\n")
+=======
+                if f.tell() == 0:  # if file is empty, write header
+                    f.write("gamma (deg),h_cruise (m),dx_to_cruise (m),cruise_cond_start_x (m),cruise_cond_end_x (m),dv_y_to_cruise (m/s),dv_x_to_cruise (m/s),v_at_h_cruise (m/s),V_cruise (m/s),a_cruise (m/s^2),density_sample (kg/m^3), velocity_sample(m/s)\n")
+                f.write(f"{gamma},{h_cruise},{dx_to_cruise},{cruise_cond_start_x},{cruise_cond_end_x},{dv_y_to_cruise},{dv_x_to_cruise},{v_at_h_cruise},{V_cruise},{a_cruise},{density_sample},{v_sample}\n")
+>>>>>>> 449f7c1e7323f886de5ff87aa1ba6c9cf4b6c47b
 
 def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3, x_sample =-1,save=False, show=True):
 
@@ -454,6 +463,7 @@ if __name__ == "__main__":
     heights = [25e3, 30e3, 35e3]  # cruise altitudes in metres
     
     x = 10e3  # 10 km
+<<<<<<< HEAD
     plot_mission_profile(gammas, heights[1],save=False, show=True)
 
     plot_mission_profile(gammas[0], heights, save=False, show=True)
@@ -462,5 +472,15 @@ if __name__ == "__main__":
 
     plot_mission_profile(gammas[1], heights[1], save=False, show=True)
 
+=======
+    plot_mission_profile(gammas, heights[1], x_sample=x,save=False, show=False)
+
+    plot_mission_profile(gammas[0], heights,x_sample=x, save=False, show=False)
+
+    plot_mission_profile(gammas, heights, x_sample=x, save=False, show=False)
+
+    plot_mission_profile(gammas[1], heights[2], x_sample=x, save=False, show=True)
+    
+>>>>>>> 449f7c1e7323f886de5ff87aa1ba6c9cf4b6c47b
 
     
