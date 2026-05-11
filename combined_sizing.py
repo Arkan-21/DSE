@@ -1232,7 +1232,7 @@ if __name__ == "__main__":
         configuration="blended_body",
         S_plan_guess=450.0,
 
-        I_str=24.0,
+        I_str=21.0,
         I_tps=6.0,
 
         KIT=1.0,
@@ -1244,8 +1244,8 @@ if __name__ == "__main__":
 
         I_sub=0.04,
 
-        W_prop=28_000.0,
-        V_prop=100.0,
+        W_prop=17_053.50436,
+        V_prop=166.0221082,
 
         W_payload=7_000.0,
         rho_payload=100.0,
@@ -1261,7 +1261,7 @@ if __name__ == "__main__":
 
         K_lg=0.01,
         K_sub=0.02,
-        K_void=0.30,
+        K_void=0.2,
 
         volume_tol=1.0,
         weight_tol=1.0,
