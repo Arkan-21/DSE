@@ -253,14 +253,14 @@ def final_weights(matrix_entropy,results_ahp,results_entropy, verbose=True):
 # EXAMPLE USAGE
 # ======================================================
 
-matrix_ahp = np.array([
-    [1,     2,     2,     1/2,   4,   3,   5],
-    [1/2,   1,     1,     1/3,   3,   2,   4],
-    [1/2,   1,     1,     1/3,   3,   2,   4],
-    [2,     3,     3,     1,     4,   5,   6],
-    [1/4,   1/3,   1/3,   1/6,   1,   1/2, 2],
-    [1/3,   1/2,   1/2,   1/4,   2,   1,   3],
-    [1/6,   1/4,   1/4,   1/7,   1/2, 1/3, 1]
+matrix_ahp = np.matrix([
+    [1,    1,    1/2, 1/4, 1/2, 2,   4],
+    [1,    1,    1/2, 1/4, 1/2, 2,   4],
+    [2,    2,    1,   1/3, 2,   3,   5],
+    [4,    4,    3,   1,   4,   5,   7],
+    [2,    2,    1/2, 1/4, 1,   3,   5],
+    [1/2,  1/2,  1/3, 1/5, 1/3, 1,   3],
+    [1/4,  1/4,  1/5, 1/7, 1/5, 1/3, 1]
 ])
 
 criteria = [
@@ -273,7 +273,7 @@ criteria = [
     "Cost"
 ]
 
-results_ahp = ahp_weights(matrix_ahp, criteria,verbose=False)
+results_ahp = ahp_weights(matrix_ahp, criteria,verbose=True)
 
 ##Make sure this matrix has equal columns as criteria. If a criteria does not have
 ###put 1's for the entire column
@@ -284,15 +284,13 @@ matrix_entropy = np.array([
     [1,   39.6, 43,  1, 1, 1, 3.48]]
     )
 
-results_entropy = entropy_weights(matrix_entropy,verbose=False)
+results_entropy = entropy_weights(matrix_entropy,verbose=True)
 
 
 results_final = final_weights(matrix_entropy,results_ahp,results_entropy)
 
-print(results_ahp['weights'])
-print(results_entropy['weights'])
 
-print(results_final)
+
 
 
 
