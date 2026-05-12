@@ -402,7 +402,14 @@ class ShapiroODE:
                     dH_dx, mdot, dmdot_dx, W, dW_dx, dgamma_dx,
                     switches=None):
         if switches is None:
-            switches = {k: True for k in ("area", "friction", "mass", "heat", "MW", "gamma")}
+            switches = {
+                "area": True,
+                "friction": True,
+                "mass": True,
+                "heat": True,
+                "MW": True,
+                "gamma": True,
+            }
         on = lambda key: 1.0 if switches.get(key, True) else 0.0
 
         g = gamma
@@ -615,9 +622,9 @@ class ShapiroODE:
             fun=rhs,
             t_span=(x_start, x_end),
             y0=y0,
-            method="BDF",
+            method="DOP853",
             rtol=1e-6,
-            atol=1e-8,
+            atol=1e-6,
             max_step=(x_end - x_start) / 50,
             events=[choke_event, pressure_event],
             dense_output=False,
@@ -699,14 +706,14 @@ class ShapiroODE:
 # Engine
 # ---------------------------------------------------------------------------
 class Engine:
-    L01 = 0.4
+    L01 = 0.2
     L12 = 0.40
-    L23 = 0.2
+    L23 = 0.01
     L34 = 1.00
-    L45 = 0.40
+    L45 = 1.0
     alpha12 = 1.0
     alpha13 = 1.1
-    alpha14 = 2.5
+    alpha14 = 2.4
     alpha05 = 2.0
 
     EPSILON     = 0.4
@@ -1049,6 +1056,13 @@ class Engine:
         )
 
         Y_exit = composition_fn(L_23, 0.0, 0.0)  # honours sw_mass
+
+        # Report ACTUAL injected fuel — what the integrator's mass-flow ODE
+        # produced. With mass=False the integrator zeroed dṁ/dx, so
+        # mdot_exit == mdot_air ⇒ mfuel_actual = 0. With mass=True it
+        # equals the scheduled mfuel_total. Downstream consumers (sec4,
+        # performance) should use this physically realised value.
+        mfuel_actual = max(self._f(result["mdot"][-1]) - mdot_air, 0.0)
         return {
             "Ma3": self._f(result["Ma"][-1]),
             "T3":  self._f(result["T"][-1]),
@@ -1062,7 +1076,8 @@ class Engine:
             "s3":  self._f(result["s"][-1]),
             "A3":  A3,
             "mdot": self._f(result["mdot"][-1]),
-            "mfuel": mfuel_total,
+            "mfuel":           mfuel_actual,    # honours sw_mass (0 if off)
+            "mfuel_scheduled": mfuel_total,     # what φ asked for, pre-mask
             "phi": phi,
             "Y": Y_exit,
             "Yf_at_x_fn": Yf_at_x,
@@ -1093,15 +1108,21 @@ class Engine:
         T3    = self._f(sec3["T3"])
         p3    = self._f(sec3["p3"])
         mdot  = self._f(sec3["mdot"])
-        mfuel = self._f(sec3["mfuel"])
+        mfuel = self._f(sec3["mfuel"])         # actual injected (= 0 if mass=False)
 
-        # Reactant composition at sec4 inlet (= sec3 exit) — air + injected H2.
+        # Reactant composition at sec4 inlet (= sec3 exit) — air + any injected H2.
         Y_react = dict(sec3["Y"])
-        # Make sure every CEA product key exists (so blend has uniform keys)
         for sp in CEAComp.PROD_NAMES:
             Y_react.setdefault(sp, 0.0)
 
-        of_ratio = (mdot - mfuel) / mfuel if mfuel > 1e-12 else 1e6
+        # O/F mass ratio is derived from the ACTUAL H₂ mass fraction in the
+        # reactant stream, not the scheduled φ.  If sec3 ran with mass=False,
+        # Y_react is pure air ⇒ Yf_react = 0 ⇒ of_ratio → ∞ ⇒ CEA returns
+        # essentially air at every (T, p), h_eq ≈ h_react, and Q_eff ≈ 0.
+        # That is, **no fuel ⇒ no combustion**, exactly as physics demands —
+        # even if the `heat` switch itself is left ON.
+        Yf_react = float(Y_react.get("H2", 0.0))
+        of_ratio = (1.0 - Yf_react) / Yf_react if Yf_react > 1e-12 else 1e6
 
         theta = 0  # injection angle (0 = parallel ⇒ η = x/L linear)
 
@@ -1277,8 +1298,9 @@ class Engine:
         mfuel = self._f(sec3["mfuel"])
 
         Fin = mdot5*V5 + p5*A5 - mdot_air*V0 - p0*A0
+        Isp = Fin / ((mfuel+mdot_air)) * 9.80665
         Ia  = Fin / mdot_air
-        return {"Fin": Fin, "Ia": Ia, "mfuel": mfuel, "thermal_choke": False}
+        return {"Fin": Fin, "Isp": Isp, "Ia": Ia, "mfuel": mfuel, "thermal_choke": False}
 
     # =====================================================================
     # Plot
@@ -1394,6 +1416,22 @@ class Engine:
 
 
 # ---------------------------------------------------------------------------
+# Run One Case
+# ---------------------------------------------------------------------------
+def altitude_mach(self, h_km, Ma0):
+    """Helper to run a single case and print results."""
+    eng = Engine()
+    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
+    iso  = eng.isolator_properties(inp)
+    sec2 = eng.combustor_properties2(iso)
+    sec3 = eng.combustor_properties3(sec2, phi=0.5)
+    sec4 = eng.combustor_properties4(sec3)
+    sec5 = eng.nozzle_properties(sec4, inp)
+    perf = eng.performance(inp, sec5, sec3)
+    return perf
+
+
+# ---------------------------------------------------------------------------
 # Pretty-printer
 # ---------------------------------------------------------------------------
 def print_section(title, props, fields):
@@ -1416,7 +1454,7 @@ if __name__ == "__main__":
     h_km = 25.0
     Ma0  = 5.0
     mdot = 100.0
-    phi  = 0.05
+    phi  = 0.5
 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET PERFORMANCE ANALYSIS (H₂ fuel, φ={phi})")
@@ -1487,6 +1525,7 @@ if __name__ == "__main__":
 
         print_section("PERFORMANCE METRICS", perf, [
             ("Internal thrust Fin",    "Fin", "N",      1.0),
+            ("Specific impulse Isp",  "Isp", "s",      1.0),
             ("Specific thrust Ia",     "Ia",  "N·s/kg", 1.0),
         ])
 
@@ -1500,3 +1539,177 @@ if __name__ == "__main__":
             print(f"    {sp:>4}: {y:.4f}")
 
         eng.plot_flowpath(inp, iso, sec2, sec3, sec4, sec5)
+
+        # mach_range = np.arange(5.0, 10.5, 0.5)
+        # alt_range  = np.arange(25.0, 32.0, 1.0)   # km
+
+        # ISP_map    = np.full((len(alt_range), len(mach_range)), np.nan)
+        # THRUST_map = np.full((len(alt_range), len(mach_range)), np.nan)
+
+        # eng = Engine()
+
+        # for i, h in enumerate(alt_range):
+        #     for j, M in enumerate(mach_range):
+
+        #         try:
+        #             perf = altitude_mach(eng, h_km=h, Ma0=M)
+
+        #             if perf.get("thermal_choke", False):
+        #                 ISP_map[i, j] = np.nan
+        #                 THRUST_map[i, j] = np.nan
+
+        #             else:
+        #                 ISP_map[i, j]    = perf["Isp"]
+        #                 THRUST_map[i, j] = perf["Fin"]
+
+        #             print(
+        #                 f"h={h:.1f} km | "
+        #                 f"M={M:.2f} | "
+        #                 f"Isp={ISP_map[i,j]:.2f} s | "
+        #                 f"Fin={THRUST_map[i,j]:.2f} N"
+        #             )
+
+        #         except Exception as e:
+        #             print(f"FAILED at h={h:.1f} km, M={M:.2f}")
+        #             print(e)
+
+        #             ISP_map[i, j]    = np.nan
+        #             THRUST_map[i, j] = np.nan
+
+        # # ---------------------------------------------------------------------------
+        # # Meshgrid
+        # # ---------------------------------------------------------------------------
+
+        # M_grid, H_grid = np.meshgrid(mach_range, alt_range)
+
+        # # ---------------------------------------------------------------------------
+        # # ISP contour plot
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(10, 6))
+
+        # cont1 = plt.contourf(
+        #     M_grid,
+        #     H_grid,
+        #     ISP_map,
+        #     levels=40,
+        # )
+
+        # cbar1 = plt.colorbar(cont1)
+        # cbar1.set_label("Specific Impulse Isp [s]")
+
+        # plt.xlabel("Mach Number")
+        # plt.ylabel("Altitude [km]")
+        # plt.title("Scramjet Specific Impulse Map")
+
+        # plt.tight_layout()
+
+        # # ---------------------------------------------------------------------------
+        # # THRUST contour plot
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(10, 6))
+
+        # cont2 = plt.contourf(
+        #     M_grid,
+        #     H_grid,
+        #     THRUST_map,
+        #     levels=40,
+        # )
+
+        # cbar2 = plt.colorbar(cont2)
+        # cbar2.set_label("Internal Thrust Fin [N]")
+
+        # plt.xlabel("Mach Number")
+        # plt.ylabel("Altitude [km]")
+        # plt.title("Scramjet Internal Thrust Map")
+
+        # plt.tight_layout()
+
+        # plt.show()
+
+
+        # h_km = 25.0
+        # Ma0  = 5.0
+        # phi  = 0.5
+
+        # # Mass flow sweep
+        # mdot_range = np.arange(1.0, 500.0, 10.0)
+
+        # ISP_list    = []
+        # THRUST_list = []
+
+
+        # # ---------------------------------------------------------------------------
+        # # Sweep mdot
+        # # ---------------------------------------------------------------------------
+
+        # for mdot in mdot_range:
+
+        #     try:
+        #         # Run engine
+        #         inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=mdot)
+        #         iso  = eng.isolator_properties(inp)
+        #         sec2 = eng.combustor_properties2(iso)
+        #         sec3 = eng.combustor_properties3(sec2, phi=phi)
+        #         sec4 = eng.combustor_properties4(sec3)
+
+        #         if sec4["thermal_choke"]:
+        #             ISP_list.append(np.nan)
+        #             THRUST_list.append(np.nan)
+
+        #             print(f"ṁ={mdot:.1f} kg/s -> THERMAL CHOKE")
+
+        #             continue
+
+        #         sec5 = eng.nozzle_properties(sec4, inp)
+        #         perf = eng.performance(inp, sec5, sec3)
+
+        #         ISP_list.append(perf["Isp"])
+        #         THRUST_list.append(perf["Fin"])
+
+        #         print(
+        #             f"ṁ={mdot:.1f} kg/s | "
+        #             f"Isp={perf['Isp']:.2f} s | "
+        #             f"Fin={perf['Fin']:.2f} N"
+        #         )
+
+        #     except Exception as e:
+
+        #         ISP_list.append(np.nan)
+        #         THRUST_list.append(np.nan)
+
+        #         print(f"FAILED at mdot={mdot:.1f}")
+        #         print(e)
+
+        # # ---------------------------------------------------------------------------
+        # # Plot Isp
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(9,5))
+
+        # plt.plot(mdot_range, ISP_list)
+
+        # plt.xlabel("Air Mass Flow ṁ_air [kg/s]")
+        # plt.ylabel("Specific Impulse Isp [s]")
+        # plt.title("Isp vs Air Mass Flow")
+
+        # plt.grid(True)
+        # plt.tight_layout()
+
+        # # ---------------------------------------------------------------------------
+        # # Plot Thrust
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(9,5))
+
+        # plt.plot(mdot_range, THRUST_list)
+
+        # plt.xlabel("Air Mass Flow ṁ_air [kg/s]")
+        # plt.ylabel("Internal Thrust Fin [N]")
+        # plt.title("Thrust vs Air Mass Flow")
+
+        # plt.grid(True)
+        # plt.tight_layout()
+
+        # plt.show()
