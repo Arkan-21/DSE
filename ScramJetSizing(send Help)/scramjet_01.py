@@ -402,7 +402,14 @@ class ShapiroODE:
                     dH_dx, mdot, dmdot_dx, W, dW_dx, dgamma_dx,
                     switches=None):
         if switches is None:
-            switches = {k: True for k in ("area", "friction", "mass", "heat", "MW", "gamma")}
+            switches = {
+                "area": True,
+                "friction": True,
+                "mass": True,
+                "heat": True,
+                "MW": True,
+                "gamma": True,
+            }
         on = lambda key: 1.0 if switches.get(key, True) else 0.0
 
         g = gamma
@@ -615,9 +622,9 @@ class ShapiroODE:
             fun=rhs,
             t_span=(x_start, x_end),
             y0=y0,
-            method="BDF",
+            method="DOP853",
             rtol=1e-6,
-            atol=1e-8,
+            atol=1e-6,
             max_step=(x_end - x_start) / 50,
             events=[choke_event, pressure_event],
             dense_output=False,
@@ -1291,8 +1298,9 @@ class Engine:
         mfuel = self._f(sec3["mfuel"])
 
         Fin = mdot5*V5 + p5*A5 - mdot_air*V0 - p0*A0
+        Isp = Fin / ((mfuel+mdot_air)) * 9.80665
         Ia  = Fin / mdot_air
-        return {"Fin": Fin, "Ia": Ia, "mfuel": mfuel, "thermal_choke": False}
+        return {"Fin": Fin, "Isp": Isp, "Ia": Ia, "mfuel": mfuel, "thermal_choke": False}
 
     # =====================================================================
     # Plot
@@ -1430,7 +1438,7 @@ if __name__ == "__main__":
     h_km = 25.0
     Ma0  = 5.0
     mdot = 100.0
-    phi  = 0.05
+    phi  = 0.5
 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET PERFORMANCE ANALYSIS (H₂ fuel, φ={phi})")
@@ -1501,6 +1509,7 @@ if __name__ == "__main__":
 
         print_section("PERFORMANCE METRICS", perf, [
             ("Internal thrust Fin",    "Fin", "N",      1.0),
+            ("Specific impulse Isp",  "Isp", "s",      1.0),
             ("Specific thrust Ia",     "Ia",  "N·s/kg", 1.0),
         ])
 
