@@ -5,10 +5,10 @@ import numpy as np
 csv_file = "density_velocity_database.csv"
 
 # Leading-edge nose radius [m]
-rad = 0.02
+rad = 0.01
 
 # Material properties
-emissivity = 0.85
+emissivity = 0.9
 
 # Stefan-Boltzmann constant
 sigma = 5.670374419e-8  # W/m²/K⁴
@@ -23,7 +23,7 @@ def sutgrav(rho, rad, v):
 # ── Equilibrium wall temperature ────────────────────────────────────────────
 def equilibrium_temperature(q, emissivity):
 
-    T_eq = (q / (emissivity * sigma))**0.25
+    T_eq = (q / (emissivity * sigma * 1.06))**0.25
 
     return T_eq
 
