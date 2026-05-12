@@ -706,14 +706,14 @@ class ShapiroODE:
 # Engine
 # ---------------------------------------------------------------------------
 class Engine:
-    L01 = 0.4
+    L01 = 0.2
     L12 = 0.40
-    L23 = 0.2
+    L23 = 0.01
     L34 = 1.00
-    L45 = 0.40
+    L45 = 1.0
     alpha12 = 1.0
     alpha13 = 1.1
-    alpha14 = 2.5
+    alpha14 = 2.4
     alpha05 = 2.0
 
     EPSILON     = 0.4
@@ -1416,6 +1416,22 @@ class Engine:
 
 
 # ---------------------------------------------------------------------------
+# Run One Case
+# ---------------------------------------------------------------------------
+def altitude_mach(self, h_km, Ma0):
+    """Helper to run a single case and print results."""
+    eng = Engine()
+    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
+    iso  = eng.isolator_properties(inp)
+    sec2 = eng.combustor_properties2(iso)
+    sec3 = eng.combustor_properties3(sec2, phi=0.5)
+    sec4 = eng.combustor_properties4(sec3)
+    sec5 = eng.nozzle_properties(sec4, inp)
+    perf = eng.performance(inp, sec5, sec3)
+    return perf
+
+
+# ---------------------------------------------------------------------------
 # Pretty-printer
 # ---------------------------------------------------------------------------
 def print_section(title, props, fields):
@@ -1523,3 +1539,177 @@ if __name__ == "__main__":
             print(f"    {sp:>4}: {y:.4f}")
 
         eng.plot_flowpath(inp, iso, sec2, sec3, sec4, sec5)
+
+        # mach_range = np.arange(5.0, 10.5, 0.5)
+        # alt_range  = np.arange(25.0, 32.0, 1.0)   # km
+
+        # ISP_map    = np.full((len(alt_range), len(mach_range)), np.nan)
+        # THRUST_map = np.full((len(alt_range), len(mach_range)), np.nan)
+
+        # eng = Engine()
+
+        # for i, h in enumerate(alt_range):
+        #     for j, M in enumerate(mach_range):
+
+        #         try:
+        #             perf = altitude_mach(eng, h_km=h, Ma0=M)
+
+        #             if perf.get("thermal_choke", False):
+        #                 ISP_map[i, j] = np.nan
+        #                 THRUST_map[i, j] = np.nan
+
+        #             else:
+        #                 ISP_map[i, j]    = perf["Isp"]
+        #                 THRUST_map[i, j] = perf["Fin"]
+
+        #             print(
+        #                 f"h={h:.1f} km | "
+        #                 f"M={M:.2f} | "
+        #                 f"Isp={ISP_map[i,j]:.2f} s | "
+        #                 f"Fin={THRUST_map[i,j]:.2f} N"
+        #             )
+
+        #         except Exception as e:
+        #             print(f"FAILED at h={h:.1f} km, M={M:.2f}")
+        #             print(e)
+
+        #             ISP_map[i, j]    = np.nan
+        #             THRUST_map[i, j] = np.nan
+
+        # # ---------------------------------------------------------------------------
+        # # Meshgrid
+        # # ---------------------------------------------------------------------------
+
+        # M_grid, H_grid = np.meshgrid(mach_range, alt_range)
+
+        # # ---------------------------------------------------------------------------
+        # # ISP contour plot
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(10, 6))
+
+        # cont1 = plt.contourf(
+        #     M_grid,
+        #     H_grid,
+        #     ISP_map,
+        #     levels=40,
+        # )
+
+        # cbar1 = plt.colorbar(cont1)
+        # cbar1.set_label("Specific Impulse Isp [s]")
+
+        # plt.xlabel("Mach Number")
+        # plt.ylabel("Altitude [km]")
+        # plt.title("Scramjet Specific Impulse Map")
+
+        # plt.tight_layout()
+
+        # # ---------------------------------------------------------------------------
+        # # THRUST contour plot
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(10, 6))
+
+        # cont2 = plt.contourf(
+        #     M_grid,
+        #     H_grid,
+        #     THRUST_map,
+        #     levels=40,
+        # )
+
+        # cbar2 = plt.colorbar(cont2)
+        # cbar2.set_label("Internal Thrust Fin [N]")
+
+        # plt.xlabel("Mach Number")
+        # plt.ylabel("Altitude [km]")
+        # plt.title("Scramjet Internal Thrust Map")
+
+        # plt.tight_layout()
+
+        # plt.show()
+
+
+        # h_km = 25.0
+        # Ma0  = 5.0
+        # phi  = 0.5
+
+        # # Mass flow sweep
+        # mdot_range = np.arange(1.0, 500.0, 10.0)
+
+        # ISP_list    = []
+        # THRUST_list = []
+
+
+        # # ---------------------------------------------------------------------------
+        # # Sweep mdot
+        # # ---------------------------------------------------------------------------
+
+        # for mdot in mdot_range:
+
+        #     try:
+        #         # Run engine
+        #         inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=mdot)
+        #         iso  = eng.isolator_properties(inp)
+        #         sec2 = eng.combustor_properties2(iso)
+        #         sec3 = eng.combustor_properties3(sec2, phi=phi)
+        #         sec4 = eng.combustor_properties4(sec3)
+
+        #         if sec4["thermal_choke"]:
+        #             ISP_list.append(np.nan)
+        #             THRUST_list.append(np.nan)
+
+        #             print(f"ṁ={mdot:.1f} kg/s -> THERMAL CHOKE")
+
+        #             continue
+
+        #         sec5 = eng.nozzle_properties(sec4, inp)
+        #         perf = eng.performance(inp, sec5, sec3)
+
+        #         ISP_list.append(perf["Isp"])
+        #         THRUST_list.append(perf["Fin"])
+
+        #         print(
+        #             f"ṁ={mdot:.1f} kg/s | "
+        #             f"Isp={perf['Isp']:.2f} s | "
+        #             f"Fin={perf['Fin']:.2f} N"
+        #         )
+
+        #     except Exception as e:
+
+        #         ISP_list.append(np.nan)
+        #         THRUST_list.append(np.nan)
+
+        #         print(f"FAILED at mdot={mdot:.1f}")
+        #         print(e)
+
+        # # ---------------------------------------------------------------------------
+        # # Plot Isp
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(9,5))
+
+        # plt.plot(mdot_range, ISP_list)
+
+        # plt.xlabel("Air Mass Flow ṁ_air [kg/s]")
+        # plt.ylabel("Specific Impulse Isp [s]")
+        # plt.title("Isp vs Air Mass Flow")
+
+        # plt.grid(True)
+        # plt.tight_layout()
+
+        # # ---------------------------------------------------------------------------
+        # # Plot Thrust
+        # # ---------------------------------------------------------------------------
+
+        # plt.figure(figsize=(9,5))
+
+        # plt.plot(mdot_range, THRUST_list)
+
+        # plt.xlabel("Air Mass Flow ṁ_air [kg/s]")
+        # plt.ylabel("Internal Thrust Fin [N]")
+        # plt.title("Thrust vs Air Mass Flow")
+
+        # plt.grid(True)
+        # plt.tight_layout()
+
+        # plt.show()
