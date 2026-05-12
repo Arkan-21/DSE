@@ -402,8 +402,15 @@ class ShapiroODE:
                     dH_dx, mdot, dmdot_dx, W, dW_dx, dgamma_dx,
                     switches=None):
         if switches is None:
-            switches = {k: True for k in ("area", "friction", "mass", "heat", "MW", "gamma")}
-        on = lambda key: 1.0 if switches.get(key, True) else 0.0
+            switches = {
+                "area": False,
+                "friction": False,
+                "mass": False,
+                "heat": False,
+                "MW": False,
+                "gamma": False,
+            }
+        on = lambda key: 1.0 if switches.get(key, False) else 0.0
 
         g = gamma
         M2 = Ma2
@@ -1382,7 +1389,7 @@ if __name__ == "__main__":
     h_km = 25.0
     Ma0  = 5.0
     mdot = 100.0
-    phi  = 0.05
+    phi  = 0.7
 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET PERFORMANCE ANALYSIS (H₂ fuel, φ={phi})")

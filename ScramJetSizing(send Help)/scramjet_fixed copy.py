@@ -380,13 +380,13 @@ class ShapiroODE:
 class Engine:
     L01 = 0.2
     L12 = 0.40
-    L23 = 0.2
+    L23 = 0.01
     L34 = 1.00
-    L45 = 0.40
+    L45 = 1.0
     alpha12 = 1.0
     alpha13 = 1.1
-    alpha14 = 2.5
-    alpha05 = 2.0
+    alpha14 = 0.01
+    alpha05 = 10.0
 
     EPSILON = 0.4
     ETA_C = 0.9
@@ -1002,7 +1002,7 @@ if __name__ == "__main__":
     h_km = 25.0
     Ma0 = 5.0
     mdot = 100.0
-    phi = 0.05
+    phi = 0.00
 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET PERFORMANCE ANALYSIS (H₂ fuel, φ={phi})")
