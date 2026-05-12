@@ -209,37 +209,61 @@ class Atmosphere:
 
 class ShapiroODE:
     @staticmethod
-    def derivatives(Ma2, p, T, gamma, Cp, dA_dx, A, D, Cf, dH_dx, mdot, dmdot_dx, W, dW_dx, dgamma_dx):
+    def derivatives(Ma2, p, T, gamma, Cp, dA_dx, A, D, Cf, dH_dx, mdot, dmdot_dx, W, dW_dx, dgamma_dx, switches=None):
+        """
+        Computes derivatives using Shapiro Influence Coefficients with optional toggles.
+        
+        switches: dict with keys 'area', 'friction', 'mass', 'heat', 'MW', 'gamma' (True/False)
+        """
+        # Default: All influences ON if no switches provided
+        if switches is None:
+            switches = {k: True for k in ['area', 'friction', 'mass', 'heat', 'MW', 'gamma']}
 
-        g = gamma; M2 = Ma2
+        # Helper function to return 1.0 if switch is True, else 0.0
+        on = lambda key: 1.0 if switches.get(key, True) else 0.0
+
+        g = gamma
+        M2 = Ma2
         D1 = 1.0 - M2
+        
+        # Avoid singularity at Mach 1
+        if abs(D1) < 1e-8:
+            D1 = 1e-8 if D1 >= 0 else -1e-8
+
+        # Common groupings
         g1m2 = 1.0 + (g - 1.0) / 2.0 * M2
         gM2 = g * M2
         fric = 4.0 * Cf / D
+        heat = dH_dx / (Cp * T)
 
-        dMa2_dx = (
-            -2.0 * g1m2 / D1 * dA_dx / A
-            + (1.0 + gM2) / D1 * (dH_dx / (Cp * T))
-            + gM2 * g1m2 / D1 * fric
-            + 2.0 * (1.0 + gM2) * g1m2 / D1 * dmdot_dx / mdot
-            - (1.0 + gM2) / D1 * dW_dx / W - dgamma_dx/gamma
-            )*M2
+        # 1. Mach Number Squared Derivative (dMa2/dx)
+        dMa2_dx = M2 * (
+            - (2.0 * g1m2 / D1) * (dA_dx / A) * on('area')
+            + ((1.0 + gM2) / D1) * heat * on('heat')
+            + (gM2 * g1m2 / D1) * fric * on('friction')
+            + (2.0 * (1.0 + gM2) * g1m2 / D1) * (dmdot_dx / mdot) * on('mass')
+            - ((1.0 + gM2) / D1) * (dW_dx / W) * on('MW')
+            - (dgamma_dx / g) * on('gamma')
+        )
 
-        dp_dx = (
-            gM2 / D1 * dA_dx / A
-            - gM2 / D1 * (dH_dx / (Cp * T))
-            - gM2 * (1.0 + (g - 1.0) * M2) / (2.0 * D1) * fric
-            - 2.0 * gM2 * g1m2 / D1 * dmdot_dx / mdot
-            + gM2 / D1 * dW_dx / W
-        ) * p
+        # 2. Pressure Derivative (dp/dx)
+        dp_dx = p * (
+            (gM2 / D1) * (dA_dx / A) * on('area')
+            - (gM2 / D1) * heat * on('heat')
+            - (gM2 * (1.0 + (g - 1.0) * M2) / (2.0 * D1)) * fric * on('friction')
+            - (2.0 * gM2 * g1m2 / D1) * (dmdot_dx / mdot) * on('mass')
+            + (gM2 / D1) * (dW_dx / W) * on('MW')
+            # Gamma influence on pressure is usually negligible unless gas properties shift drastically
+        )
 
-        dT_dx = (
-            (g - 1.0) * M2 / D1 * dA_dx / A
-            + (1.0 + gM2) / D1 * (dH_dx / (Cp * T))
-            - g * (g - 1.0) * M2**2 / (2.0 * D1) * fric
-            - (g - 1.0) * M2 * (1.0 + gM2) / D1 * dmdot_dx / mdot
-            + (g - 1.0) * M2 / D1 * dW_dx / W
-        ) * T
+        # 3. Temperature Derivative (dT/dx)
+        dT_dx = T * (
+            ((g - 1.0) * M2 / D1) * (dA_dx / A) * on('area')
+            + ((1.0 + gM2) / D1) * heat * on('heat')
+            - (g * (g - 1.0) * (M2**2) / (2.0 * D1)) * fric * on('friction')
+            - ((g - 1.0) * M2 * (1.0 + gM2) / D1) * (dmdot_dx / mdot) * on('mass')
+            + ((g - 1.0) * M2 / D1) * (dW_dx / W) * on('MW')
+        )
 
         return dMa2_dx, dp_dx, dT_dx
 
@@ -256,13 +280,15 @@ class ShapiroODE:
             gamma, Cp, W, dW_dx, dgamma_dx = thermo_fn(T, p)
             dH_dx, dmdot_dx = source_fn(x, mdot)
 
+            user_switches = {'area': True,  'friction': True, 'mass': True, 'heat': True, 'MW': True, 'gamma': True}
+
             dM2_dx, dp_dx, dT_dx = ShapiroODE.derivatives(
                 Ma2=M2, p=p, T=T,
                 gamma=gamma, Cp=Cp,
                 dA_dx=dA_dx, A=A, D=D, Cf=Cf,
                 dH_dx=dH_dx,
                 mdot=mdot, dmdot_dx=dmdot_dx,
-                W=W, dW_dx=dW_dx, dgamma_dx=dgamma_dx,
+                W=W, dW_dx=dW_dx, dgamma_dx=dgamma_dx,switches=user_switches,
             )
             return [dM2_dx, dp_dx, dT_dx, dmdot_dx]
 
@@ -307,6 +333,7 @@ class ShapiroODE:
         Ts = np.maximum(sol.y[2], 1.0)
         mdots = np.maximum(sol.y[3], 1e-9)
         Mas = np.sqrt(Ma2s)
+        
 
         thermal_choke = len(sol.t_events[0]) > 0
         if thermal_choke:
@@ -322,6 +349,7 @@ class ShapiroODE:
 
         Vs = Mas * np.sqrt(np.maximum(gs * Rs * Ts, 0.0))
         rhos = ps / np.maximum(Rs * Ts, 1e-12)
+        Ht0 = Cps*Ts + 0.5*Vs**2
         Tts = Ts + Vs**2 / (2*np.maximum(Cps, 1e-12))
         exponent = gs / np.maximum(gs - 1.0, 1e-12)
         Pts = ps * np.maximum(Tts / np.maximum(Ts, 1e-12), 1.0) ** exponent
@@ -335,6 +363,7 @@ class ShapiroODE:
             "p": ps,
             "P": ps,
             "T": Ts,
+            "ht": Ht0,
             "rho": rhos,
             "V": Vs,
             "Tt": Tts,
@@ -603,7 +632,8 @@ class Engine:
 
         def thermo_fn(T, p):
             mdot_local = thermo_fn.mdot_current
-            Yf = max((mdot_local - mdot_air) / mdot_local, 0.0)
+            #Yf = max((mdot_local - mdot_air) / mdot_local, 0.0)
+            Yf = 0.0
             Ya = 1.0 - Yf
 
             W_air = 28.97e-3
@@ -724,328 +754,7 @@ class Engine:
             "thermal_choke": result["thermal_choke"],
         }
     
-    def TestSection(
-        self,
-        use_area:     bool = True,
-        use_friction: bool = True,
-        use_heat:     bool = True,
-        use_mass:     bool = True,
-        plot:         bool = True,
-        verbose:      bool = True,
-    ):
-        """
-        Test section for debugging the Shapiro source-term implementation.
-    
-        Parameters
-        ----------
-        use_area     : include linearly varying duct area  (A₁ → A₂)
-        use_friction : include wall skin-friction          (Cf)
-        use_heat     : include enthalpy release from fuel  (dH/dx via η_mix)
-        use_mass     : include fuel mass-flow addition     (dṁ/dx via η_mix)
-        plot         : show a per-run flow-properties plot
-        verbose      : print inlet / exit summary table
-    
-        Returns
-        -------
-        result : dict returned by shapiroODE.integrate
-        """
-        # ── geometry / flow conditions ──────────────────────────────────────────
-        L        = 0.5          # duct length [m]
-        A1, A2   = 4.0, 2.0     # inlet / exit area [m²]
-        Ma1      = 3.0
-        T1       = 700.0        # K
-        p1       = 30_000.0     # Pa
-        mdot     = 100.0        # kg/s
-        mfuel    = 0.1          # kg/s
-        Q_H2     = 120e6        # J/kg  HHV
-        theta    = 0.0          # injection angle [deg]
-        Q_total  = mfuel * Q_H2
-    
-        active_names = [
-            name for name, flag in [
-                ("area", use_area), ("friction", use_friction),
-                ("heat", use_heat), ("mass",     use_mass),
-            ] if flag
-        ]
-        tag = ", ".join(active_names) if active_names else "none"
-    
-        if verbose:
-            print(f"\n{'─'*62}")
-            print(f"  TestSection  ·  active effects : [{tag}]")
-            print(f"{'─'*62}")
-    
-        # ── mixing efficiency η(x) ──────────────────────────────────────────────
-        def mixing_efficiency(x):
-            s = float(np.clip(x / L, 1e-4, 1.0))
-            if theta == 0.0:
-                return s
-            a = float(np.clip(1.01 + 0.176 * np.log(s), 0.0, 1.0))
-            return a if theta == 90.0 else theta / 90.0 * (a - s) + s
-    
-        def deta_dx_central(x):
-            h   = 1e-4
-            return (mixing_efficiency(min(x + h, L)) -
-                    mixing_efficiency(max(x - h, 0.0))) / (2.0 * h)
-    
-        # ── geometry function ────────────────────────────────────────────────────
-        def geometry_fn(x):
-            if use_area:
-                A    = A1 + (A2 - A1) * (x / L)
-                dAdx = (A2 - A1) / L
-            else:
-                A    = A1          # constant-area duct
-                dAdx = 0.0
-            D = np.sqrt(4.0 * A / np.pi)
-            return A, dAdx, D
-    
-        # ── thermodynamics function ──────────────────────────────────────────────
-        def thermo_fn(T, p):
-            gamma = self.air.specific_heat_ratio(T, p)
-            Cp    = self.air.specific_cp(T, p)
-            comp  = self.air.equilibrium_composition(T, p / 101325)
-            W     = sum(comp[s] * self.air.MOLECULAR_WEIGHTS[s]
-                        for s in comp) * 1e-3
-            return gamma, Cp, W, 0.0, 0.0
-    
-        # ── source function ──────────────────────────────────────────────────────
-        def source_fn(x, mdot_local):
-            deta  = deta_dx_central(x)
-    
-            # Heat addition per unit length  [J/(kg·m)]
-            # (Q_total / mdot_local) converts to specific enthalpy rate
-            dH_dx    = (Q_total / mdot_local) * deta  if use_heat else 0.0
-    
-            # Mass-flow injection rate  [kg/(s·m)]
-            # η goes 0→1 over L, so ∫ mfuel·dη/dx dx = mfuel·Δη = mfuel
-            dmdot_dx = mfuel * deta                    if use_mass else 0.0
-    
-            return dH_dx, dmdot_dx
-    
-        # ── friction coefficient ─────────────────────────────────────────────────
-        Cf = self.CF_DEFAULT if use_friction else 0.0
-    
-        # ── integrate ────────────────────────────────────────────────────────────
-        result = self.shapiroODE.integrate(
-            x_start    = 0.0,
-            x_end      = L,
-            Ma2_in     = Ma1 ** 2,
-            p_in       = p1,
-            T_in       = T1,
-            mdot_in    = mdot,
-            geometry_fn= geometry_fn,
-            thermo_fn  = thermo_fn,
-            source_fn  = source_fn,
-            Cf         = Cf,
-            n_steps    = 500,
-        )
-    
-        # ── summary table ────────────────────────────────────────────────────────
-        if verbose:
-            self._print_test_summary(result)
-    
-        # ── optional plot ────────────────────────────────────────────────────────
-        if plot:
-            self._plot_test_section(result, tag)
-    
-        return result
-    
-    
-    # ──────────────────────────────────────────────────────────────────────────────
-    
-    def run_test_matrix(
-        self,
-        effects:  tuple = ("area", "friction", "heat", "mass"),
-        plot:     bool  = True,
-        verbose:  bool  = True,
-    ):
-        """
-        Run all 2^N combinations of the selected effect toggles and compare.
-    
-        Parameters
-        ----------
-        effects : subset of ("area","friction","heat","mass") to sweep
-        plot    : show a comparison grid plot at the end
-        verbose : print a compact summary table for every run
-    
-        Returns
-        -------
-        results : dict  keyed by (use_area, use_friction, use_heat, use_mass)
-        """
-        valid = ("area", "friction", "heat", "mass")
-        for e in effects:
-            if e not in valid:
-                raise ValueError(f"Unknown effect '{e}'. Choose from {valid}.")
-    
-        combos = list(itertools.product([False, True], repeat=len(effects)))
-        all_flags = [dict(zip(effects, combo)) for combo in combos]
-    
-        results = {}
-        summary_rows = []
-    
-        for flags in all_flags:
-            full = {k: flags.get(k, True) for k in valid}   # default others ON
-            key  = (full["area"], full["friction"], full["heat"], full["mass"])
-    
-            res = self.TestSection(
-                use_area=full["area"],     use_friction=full["friction"],
-                use_heat=full["heat"],     use_mass=full["mass"],
-                plot=False, verbose=verbose,
-            )
-            results[key] = res
-    
-            tag = "+".join(e for e in valid if full[e]) or "none"
-            Ma_exit = res["Ma"][-1]  if res.get("Ma")  else float("nan")
-            T_exit  = res["T"][-1]   if res.get("T")   else float("nan")
-            p_exit  = res["p"][-1]   if res.get("p")   else float("nan")
-            Tt_r    = (res["Tt"][-1] / res["Tt"][0]
-                    if res.get("Tt") else float("nan"))
-            Pt_r    = (res["Pt"][-1] / res["Pt"][0]
-                    if res.get("Pt") else float("nan"))
-            summary_rows.append((tag, Ma_exit, T_exit, p_exit * 1e-3, Tt_r, Pt_r))
-    
-        # ── comparison table ──────────────────────────────────────────────────
-        print(f"\n{'═'*82}")
-        print("  EFFECT COMBINATION MATRIX")
-        print(f"{'═'*82}")
-        hdr = f"  {'Active effects':<30}  {'Ma_exit':>8}  {'T_exit':>8}  "
-        hdr += f"{'p_exit':>9}  {'Tt_r':>7}  {'Pt_r':>7}"
-        print(hdr)
-        print(f"  {'':─<30}  {'':─>8}  {'':─>8}  {'':─>9}  {'':─>7}  {'':─>7}")
-        for tag, Ma, T, p_kpa, Tt_r, Pt_r in summary_rows:
-            print(f"  {tag:<30}  {Ma:>8.4f}  {T:>8.1f}  "
-                f"{p_kpa:>9.2f}  {Tt_r:>7.4f}  {Pt_r:>7.4f}")
-        print(f"{'═'*82}\n")
-    
-        if plot:
-            self.plot_matrix(results, effects)
-    
-        return results
-    
-    def _print_test_summary(result):
-        """Compact inlet / exit table for a single TestSection run."""
-        keys = [
-            ("Ma",    "—",    1.0,   "Mach number"),
-            ("T",     "K",    1.0,   "Static temperature"),
-            ("p",     "kPa",  1e-3,  "Static pressure"),
-            ("Tt",    "K",    1.0,   "Stagnation temperature"),
-            ("Pt",    "kPa",  1e-3,  "Stagnation pressure"),
-            ("mdot",  "kg/s", 1.0,   "Mass-flow rate"),
-        ]
-        w = 26
-        print(f"  {'Property':<{w}}  {'Inlet':>10}  {'Exit':>10}  {'Units':<5}")
-        print(f"  {'':─<{w}}  {'':─>10}  {'':─>10}")
-        for key, unit, scale, label in keys:
-            arr = result.get(key)
-            if arr is not None and len(arr) >= 2:
-                print(f"  {label:<{w}}  {arr[0]*scale:>10.4f}  "
-                    f"{arr[-1]*scale:>10.4f}  {unit}")
-        print(f"{'─'*62}\n")
- 
-  
 
-# ──────────────────────────────────────────────────────────────────────────────
- 
-    def _plot_test_section(result, tag: str):
-        """Six-panel flow-property plot for a single test-section run."""
-        x    = np.asarray(result["x"])
-        Ma   = np.asarray(result["Ma"])
-        T    = np.asarray(result["T"])
-        Tt   = np.asarray(result.get("Tt", result["T"]))
-        p    = np.asarray(result.get("p", result.get("P")))
-        Pt   = np.asarray(result.get("Pt", result.get("pt", p)))
-        mdot = np.asarray(result["mdot"])
-        A    = np.asarray(result["A"])
-    
-        fig = plt.figure(figsize=(13, 9))
-        fig.suptitle(f"Shapiro Test Section  ·  [{tag}]", fontsize=12, weight="bold")
-        gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.45, wspace=0.35)
-    
-        panels = [
-            (gs[0, 0], Ma,       "Mach number",        "—",     "tab:blue"),
-            (gs[0, 1], T,        "Static temp T",      "K",     "tab:red"),
-            (gs[1, 0], p / 1e3,  "Static pressure p",  "kPa",   "tab:green"),
-            (gs[1, 1], Pt / 1e3, "Stagnation press Pt","kPa",   "darkgreen"),
-            (gs[2, 0], mdot,     "Mass-flow ṁ",        "kg/s",  "tab:purple"),
-            (gs[2, 1], A,        "Duct area A",         "m²",    "saddlebrown"),
-        ]
-    
-        for spec, arr, ylabel, unit, color in panels:
-            ax = fig.add_subplot(spec)
-            ax.plot(x, arr, lw=2, color=color)
-            ax.set_ylabel(f"{ylabel}  [{unit}]", fontsize=9)
-            ax.set_xlabel("x  [m]", fontsize=9)
-            ax.grid(True, alpha=0.3)
-            ax.tick_params(labelsize=8)
-    
-        # add M=1 sonic line
-        ax_Ma = fig.axes[0]
-        ax_Ma.axhline(1.0, color="red", ls=":", lw=1.2, alpha=0.6, label="M = 1")
-        ax_Ma.legend(fontsize=8)
-    
-        # overlay Tt on T panel
-        ax_T = fig.axes[1]
-        ax_T.plot(x, Tt, lw=1.5, ls="--", color="darkred", label="Stag. T_t")
-        ax_T.legend(fontsize=8)
-    
-        plt.show()
-    
-    
-    # ──────────────────────────────────────────────────────────────────────────────
-    
-    def _plot_matrix(results: dict, swept_effects: tuple):
-        """
-        Overlay Mach profiles for every combination in results on a single plot.
-        """
-        valid = ("area", "friction", "heat", "mass")
-        color_map = {
-            "area":     "#4a9fd4",
-            "friction": "#e6961e",
-            "heat":     "#5ab040",
-            "mass":     "#b05ab0",
-        }
-    
-        fig, axes = plt.subplots(1, 2, figsize=(13, 5), sharey=False)
-        fig.suptitle("Shapiro test-section — effect combinations", fontsize=12, weight="bold")
-    
-        ax_Ma, ax_T = axes
-    
-        for key, res in results.items():
-            flags = dict(zip(valid, key))
-            tag   = "+".join(e for e in valid if flags[e]) or "none"
-            n_on  = sum(flags[e] for e in swept_effects)
-            # colour by number of active swept effects, differentiate by label
-            lw = 1.0 + 0.5 * n_on
-            ls = "-" if n_on % 2 == 0 else "--"
-    
-            x  = np.asarray(res["x"])
-            Ma = np.asarray(res["Ma"])
-            T  = np.asarray(res["T"])
-    
-            ax_Ma.plot(x, Ma, lw=lw, ls=ls, label=tag)
-            ax_T.plot(x, T,  lw=lw, ls=ls, label=tag)
-    
-        ax_Ma.axhline(1.0, color="red", ls=":", lw=1, alpha=0.5, label="M = 1")
-        ax_Ma.set_ylabel("Mach number")
-        ax_Ma.set_xlabel("x  [m]")
-        ax_Ma.grid(True, alpha=0.3)
-    
-        ax_T.set_ylabel("Static temperature  [K]")
-        ax_T.set_xlabel("x  [m]")
-        ax_T.grid(True, alpha=0.3)
-    
-        # legend outside, sorted by active count (fewest effects first)
-        handles, labels = ax_Ma.get_legend_handles_labels()
-        order = sorted(range(len(labels)),
-                    key=lambda i: labels[i].count("+") if labels[i] != "M = 1" else -1)
-        ax_Ma.legend(
-            [handles[i] for i in order], [labels[i] for i in order],
-            fontsize=7, loc="upper left", ncol=2,
-            framealpha=0.85,
-        )
-        ax_T.legend(fontsize=7, loc="upper left", ncol=2, framealpha=0.85)
-    
-        plt.tight_layout()
-        plt.show()
 
 
 
@@ -1369,6 +1078,5 @@ if __name__ == "__main__":
 
         eng.plot_flowpath(inp, iso, sec2, sec3, sec4, sec5)
 
-        eng.run_test_matrix(effects=("area", "friction", "heat", "mass"))
 
 
