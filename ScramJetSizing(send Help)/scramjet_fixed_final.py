@@ -541,6 +541,17 @@ class ShapiroODE:
             T_cache["T"] = T
             return T, Y, cp, W, R, gamma, V2
 
+        # Resolve switch mask once. The same dict gates BOTH the Shapiro
+        # influence coefficients (inside `derivatives`) AND the underlying
+        # physical sources here, so that disabling a phenomenon really
+        # removes it from the simulation — not just from Mach/pressure.
+        sw_heat = True if switches is None else switches.get("heat",  True)
+        sw_mass = True if switches is None else switches.get("mass",  True)
+        sw_MW   = True if switches is None else switches.get("MW",    True)
+        sw_gam  = True if switches is None else switches.get("gamma", True)
+        # `area` and `friction` are pure Shapiro-coefficient effects with
+        # no external source term — the mask inside `derivatives` is enough.
+
         # ---------------- rhs ---------------------------------------------
         def rhs(x, y):
             M2, p, ht, mdot = y
@@ -549,23 +560,32 @@ class ShapiroODE:
             A, dA_dx, D = geometry_fn(x)
             dH_dx, dmdot_dx = source_fn(x, T, p, mdot, Y)
 
-            # Compositional spatial derivatives via finite-difference in x
-            # (at fixed T, p — explicit x-dependence of composition).
-            dx_step = 1e-4
-            x_p = min(x + dx_step, x_end); x_m = max(x - dx_step, x_start)
-            span = x_p - x_m
-            if span > 0:
-                Y_p = composition_fn(x_p, T, p)
-                Y_m = composition_fn(x_m, T, p)
-                Wp = mix.W_mix(Y_p);          Wm = mix.W_mix(Y_m)
-                gp = mix.gamma_mix(Y_p, T);   gm = mix.gamma_mix(Y_m, T)
-                dW_dx     = (Wp - Wm) / span
-                dgamma_dx = (gp - gm) / span
+            # ---- gate SOURCE TERMS by heat / mass switches ---------------
+            #   heat=False ⇒ no energy enters the energy equation
+            #                (dh_t/dx contribution from chemistry / external Q → 0)
+            #   mass=False ⇒ no mass is injected (ṁ stays constant)
+            if not sw_heat: dH_dx    = 0.0
+            if not sw_mass: dmdot_dx = 0.0
+
+            # ---- composition spatial derivatives at fixed (T, p) ---------
+            # Zero them out if either compositional switch is off so the
+            # diagnostic isolation is complete (no MW or γ drift in Shapiro).
+            if sw_MW or sw_gam:
+                dx_step = 1e-4
+                x_p = min(x + dx_step, x_end); x_m = max(x - dx_step, x_start)
+                span = x_p - x_m
+                if span > 0:
+                    Y_p = composition_fn(x_p, T, p)
+                    Y_m = composition_fn(x_m, T, p)
+                    dW_dx     = (mix.W_mix(Y_p)        - mix.W_mix(Y_m))        / span if sw_MW  else 0.0
+                    dgamma_dx = (mix.gamma_mix(Y_p, T) - mix.gamma_mix(Y_m, T)) / span if sw_gam else 0.0
+                else:
+                    dW_dx = 0.0; dgamma_dx = 0.0
             else:
                 dW_dx = 0.0; dgamma_dx = 0.0
 
-            # Shapiro Ma² and p derivatives (we ignore Shapiro's dT/dx —
-            # T is set by energy conservation instead).
+            # Shapiro Ma² and p derivatives — Shapiro's dT/dx is ignored
+            # (T comes from energy conservation via Newton on h_t).
             dM2_dx, dp_dx, _ = ShapiroODE.derivatives(
                 Ma2=M2, p=p, T=T, gamma=gamma, Cp=cp,
                 dA_dx=dA_dx, A=A, D=D, Cf=Cf,
@@ -575,10 +595,10 @@ class ShapiroODE:
                 switches=switches,
             )
 
-            # Energy: dh_t/dx = external heat per unit mass per length.
-            # Mass injection at flow's local stagnation enthalpy (Shapiro
-            # standard) contributes zero — already baked into dH_dx by the
-            # source function if the user wants a different convention.
+            # Energy equation: dh_t/dx = (external heat per unit mass per length)
+            # Mass injection at flow's local stagnation enthalpy contributes 0
+            # (Shapiro convention). To inject cold fuel, add the
+            # (h_inject − h_t)·dṁ/(ṁ·dx) correction inside source_fn.
             dht_dx = dH_dx
 
             return [dM2_dx, dp_dx, dht_dx, dmdot_dx]
@@ -898,7 +918,7 @@ class Engine:
     # =====================================================================
     # Section 1→2 — Constant-area / friction-only (no composition change)
     # =====================================================================
-    def combustor_properties2(self, isolator_props):
+    def combustor_properties2(self, isolator_props, switches=None):
         L_12 = self._f(self.L12)
         A1   = self._f(isolator_props["A"])
         A2   = self._f(self.alpha12) * A1
@@ -930,6 +950,7 @@ class Engine:
             source_fn=source_fn,
             mix=self.mixture,
             state_fn=state_fn,
+            switches=switches,
             Cf=self.CF_DEFAULT, n_steps=300,
         )
 
@@ -961,9 +982,10 @@ class Engine:
     # Section 2→3 — Fuel injection (mass addition only, no combustion)
     # Frozen mixing: H2 streams blend with air; composition evolves with x.
     # =====================================================================
-    def combustor_properties3(self, sec2, phi=0.0):
-        mix   = self.mixture
-        Y_air = sec2["Y"]
+    def combustor_properties3(self, sec2, phi=0.0, switches=None):
+        mix    = self.mixture
+        Y_air  = sec2["Y"]
+        sw_mass = True if switches is None else switches.get("mass", True)
         W_h2  = self.air.MOLECULAR_WEIGHTS["H2"] * 1e-3
         W_air = mix.W_mix(Y_air)
 
@@ -1004,17 +1026,21 @@ class Engine:
             return A, dA_dx, D
 
         def composition_fn(x, T, p):
-            # Yf depends only on x (via linear ṁ growth) — T and p ignored.
+            # If `mass` is disabled, freeze composition at inlet air —
+            # no fuel was ever injected, so Yf stays 0 throughout.
+            if not sw_mass:
+                return Y_air
             mdot_local = mdot_air + dmdot_dx_const * x
             return Y_at_mdot(mdot_local)
 
         def source_fn(x, T, p, mdot_local, Y):
             # No external heat; mass injection at flow's local stagnation
-            # enthalpy is the Shapiro standard convention.
+            # enthalpy is the Shapiro standard convention. The integrator
+            # masks `dmdot_dx` to zero when `mass=False`.
             return 0.0, dmdot_dx_const
 
         def state_fn(T, p, V, x):
-            Y = Y_at_mdot(mdot_air + dmdot_dx_const * x)
+            Y = composition_fn(x, T, p)
             return mix.stagnation_state(Y, T, p, V)
 
         result = self.shapiroODE.integrate(
@@ -1025,10 +1051,11 @@ class Engine:
             source_fn=source_fn,
             mix=mix,
             state_fn=state_fn,
+            switches=switches,
             Cf=self.CF_DEFAULT, n_steps=200,
         )
 
-        Y_exit = Y_at_mdot(mdot_air + mfuel_total)
+        Y_exit = composition_fn(L_23, 0.0, 0.0)  # honours sw_mass
         return {
             "Ma3": self._f(result["Ma"][-1]),
             "T3":  self._f(result["T"][-1]),
@@ -1052,7 +1079,7 @@ class Engine:
     # =====================================================================
     # Section 3→4 — Combustion with per-step CEA equilibrium
     # =====================================================================
-    def combustor_properties4(self, sec3):
+    def combustor_properties4(self, sec3, switches=None):
         if not _HAS_CEA:
             raise ImportError(
                 "NASA CEA is required for combustor_properties4. "
@@ -1061,6 +1088,7 @@ class Engine:
 
         mix      = self.mixture
         cea_comp = self._get_cea()
+        sw_heat  = True if switches is None else switches.get("heat", True)
 
         L_34 = self._f(self.L34)
 
@@ -1117,6 +1145,10 @@ class Engine:
             return A, dA_dx, D
 
         def composition_fn(x, T, p):
+            # If `heat` is disabled, no combustion takes place — composition
+            # stays at the reactant mixture (frozen H2 + air).
+            if not sw_heat:
+                return Y_react
             eta = mixing_efficiency(x)
             return Y_blended(eta, T, p)
 
@@ -1125,6 +1157,8 @@ class Engine:
             # Evaluating both at the same T gives the "chemistry energy"
             # liberated per unit fuel-mixing progress — automatically
             # incorporates dissociation losses at high T (h_eq rises).
+            # The integrator masks dH_dx to zero if `heat=False`, so we
+            # don't need to short-circuit here.
             h_react = mix.h_mix(Y_react, T)
             Yeq     = Y_eq_at(T, p)
             h_eq    = mix.h_mix(Yeq, T)
@@ -1132,9 +1166,8 @@ class Engine:
             return dH_dx, 0.0
 
         def state_fn(T, p, V, x):
-            eta = mixing_efficiency(x)
-            Yb  = Y_blended(eta, T, p)
-            return mix.stagnation_state(Yb, T, p, V)
+            Y = composition_fn(x, T, p)   # honours sw_heat
+            return mix.stagnation_state(Y, T, p, V)
 
         result = self.shapiroODE.integrate(
             x_start=0.0, x_end=L_34,
@@ -1144,14 +1177,14 @@ class Engine:
             source_fn=source_fn,
             mix=mix,
             state_fn=state_fn,
+            switches=switches,
             Cf=self.CF_DEFAULT, n_steps=500,
         )
 
-        # Exit composition — used to freeze the nozzle.
+        # Exit composition — used to freeze the nozzle.  Honours sw_heat.
         x_exit = result["x"][-1]
-        eta_exit = mixing_efficiency(x_exit)
         T_exit, p_exit = result["T"][-1], result["p"][-1]
-        Y_exit = Y_blended(eta_exit, T_exit, p_exit)
+        Y_exit = composition_fn(x_exit, T_exit, p_exit)
 
         return {
             "Ma4": self._f(result["Ma"][-1]),
@@ -1174,7 +1207,7 @@ class Engine:
     # =====================================================================
     # Section 4→5 — Nozzle (frozen at sec4 exit composition)
     # =====================================================================
-    def nozzle_properties(self, sec4, inlet_props):
+    def nozzle_properties(self, sec4, inlet_props, switches=None):
         if sec4["thermal_choke"]:
             return {"thermal_choke": True}
 
@@ -1210,6 +1243,7 @@ class Engine:
             source_fn=source_fn,
             mix=mix,
             state_fn=state_fn,
+            switches=switches,
             Cf=self.CF_DEFAULT, n_steps=200,
         )
 

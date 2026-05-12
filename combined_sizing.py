@@ -89,6 +89,26 @@ def isa_pressure(altitude_m: float) -> float:
     return p
 
 
+def isa_density(altitude_m: float) -> float:
+    """
+    Approximate ISA static density [kg/m^3].
+    """
+    R = 287.05
+    return isa_pressure(altitude_m) / (R * isa_temperature(altitude_m))
+
+
+def dynamic_pressure_from_mach_altitude(mach: float, altitude_m: float) -> float:
+    """
+    Dynamic pressure q = 0.5 rho V^2 [Pa].
+    """
+    if mach <= 0:
+        raise ValueError("mach must be positive for dynamic pressure calculation.")
+
+    rho = isa_density(altitude_m)
+    V = mach_to_velocity(mach, altitude_m)
+    return 0.5 * rho * V**2
+
+
 # =============================================================================
 # Ramjet equations
 # =============================================================================
@@ -194,15 +214,11 @@ def ramjet_thrust_and_isp(
 def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
     """
     Wetted-to-planform area ratio K_W as a function of Küchemann tau.
-
-    Currently forced to K_W = 2.407 for paper reproduction.
-    To use polynomial fits again, comment out `return 2.407`
-    and uncomment the polynomial block.
     """
 
     if tau <= 0:
         raise ValueError("tau must be positive.")
-    
+
     if configuration == "waverider":
         return (
             5632.2 * tau**4
@@ -211,7 +227,7 @@ def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
             - 46.623 * tau
             + 3.8167
         )
-    
+
     elif configuration == "wing_body":
         return (
             473.07 * tau**4
@@ -220,14 +236,14 @@ def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
             - 9.6647 * tau
             + 2.9019
         )
-    
+
     elif configuration == "blended_body":
         return (
             18.594 * tau**2
             + 0.0084 * tau
             + 2.4274
         )
-    
+
     else:
         raise ValueError(
             "configuration must be one of: "
@@ -249,15 +265,20 @@ class MissionSegment:
         "T_gt_D" -> uses exp[-Δ(h + V²/2g) / (Isp V (1 - D/T))]
         "T_eq_D" -> uses exp[-D Δt / (Isp W)]
 
-    Drag:
-        Lift-balance drag is used:
-            D = W_current * g * (C_D / C_L)
+    Drag model:
+        Drag is now computed from dynamic pressure and an aerodynamic polar:
 
-        This assumes each segment is flown such that L ≈ W.
+            L_required = W g cos(gamma) + W g * n_normal_extra
+            C_L_calc = L_required / (q S_plan)
+            C_D_calc = C_D0 + k_induced * C_L_calc²
+            D = q S_plan C_D_calc
 
-    Notes:
-        mach_drag and altitude_drag are kept only for reporting/context.
-        They are NOT used for drag in this version.
+        If use_drag_polar=False, the old coefficient-ratio method is available,
+        but with L_required instead of Wg:
+
+            D = L_required * C_D / C_L
+
+        If insufficient aerodynamic data are supplied, segment.D is used.
     """
 
     name: str
@@ -272,16 +293,24 @@ class MissionSegment:
     g: float = 9.81
     I_sp: float = 0.0
 
-    # Manual drag fallback, used only if C_L or C_D is not supplied
+    # Manual drag fallback
     D: float = 0.0
 
-    # Aerodynamic coefficients
+    # Optional reference aerodynamic coefficients
+    # These are used only if use_drag_polar=False or as reporting/reference values.
     C_L: float = 0.0
     C_D: float = 0.0
 
-    # Retained only for context/reporting
+    # Drag polar inputs
+    use_drag_polar: bool = True
+    C_D0: float = 0.0
+    k_induced: float = 0.0
+
+    # Flight condition for drag calculation
     mach_drag: float = 0.0
     altitude_drag: float = 0.0
+    flight_path_angle_deg: float = 0.0
+    n_normal_extra: float = 0.0
 
     # Segment thrust [N]
     T: float = 0.0
@@ -293,38 +322,199 @@ class MissionSegment:
     fixed_fraction: float = 1.0
 
 
-def segment_drag(
+def segment_lift_required(
     segment: MissionSegment,
     W_current: float,
 ) -> float:
     """
-    Calculate segment drag using lift balance:
+    Required aerodynamic lift [N].
 
-        D = W_current * g * (C_D / C_L)
+    For a straight climb/descent with no normal acceleration:
+        L = W g cos(gamma)
 
-    If C_L or C_D is missing, use the manually stored segment.D.
+    n_normal_extra can be used to add pull-up/turn/load-factor effects later.
     """
 
-    if segment.C_L > 0.0 and segment.C_D > 0.0:
-        W_current_force = W_current * segment.g
-        return W_current_force * (segment.C_D / segment.C_L)
+    gamma_rad = math.radians(segment.flight_path_angle_deg)
+    W_current_force = W_current * segment.g
 
-    return segment.D
+    return W_current_force * (math.cos(gamma_rad) + segment.n_normal_extra)
+
+
+def segment_aero_from_polar(
+    segment: MissionSegment,
+    W_current: float,
+    S_plan: float,
+) -> dict[str, float]:
+    """
+    Calculate aerodynamic coefficients and drag from q, S_plan, and drag polar.
+    """
+
+    if S_plan <= 0:
+        raise ValueError("S_plan must be positive.")
+
+    if segment.mach_drag <= 0.0:
+        raise ValueError(
+            f"Segment '{segment.name}' needs mach_drag > 0 for drag-polar calculation."
+        )
+
+    q = dynamic_pressure_from_mach_altitude(
+        mach=segment.mach_drag,
+        altitude_m=segment.altitude_drag,
+    )
+
+    if q <= 0:
+        raise ValueError(f"Segment '{segment.name}' dynamic pressure is non-positive.")
+
+    L_required = segment_lift_required(segment, W_current)
+    C_L_calc = L_required / (q * S_plan)
+    C_D_calc = segment.C_D0 + segment.k_induced * C_L_calc**2
+    D_calc = q * S_plan * C_D_calc
+
+    return {
+        "D": D_calc,
+        "L_required": L_required,
+        "q": q,
+        "C_L_calc": C_L_calc,
+        "C_D_calc": C_D_calc,
+        "L_over_D_calc": C_L_calc / C_D_calc if C_D_calc > 0 else 0.0,
+    }
+
+
+def segment_drag(
+    segment: MissionSegment,
+    W_current: float,
+    S_plan: float,
+) -> tuple[float, dict[str, float]]:
+    """
+    Calculate segment drag.
+
+    Preferred method:
+        D = q S C_D, with C_D = C_D0 + k C_L² and C_L = L/(qS)
+
+    Fallback method:
+        D = L * C_D / C_L
+
+    Last fallback:
+        use segment.D
+    """
+
+    if segment.use_drag_polar and segment.C_D0 > 0.0:
+        aero = segment_aero_from_polar(segment, W_current, S_plan)
+        return aero["D"], aero
+
+    if segment.C_L > 0.0 and segment.C_D > 0.0:
+        L_required = segment_lift_required(segment, W_current)
+        D_calc = L_required * (segment.C_D / segment.C_L)
+        aero = {
+            "D": D_calc,
+            "L_required": L_required,
+            "q": 0.0,
+            "C_L_calc": segment.C_L,
+            "C_D_calc": segment.C_D,
+            "L_over_D_calc": segment.C_L / segment.C_D,
+        }
+        return D_calc, aero
+
+    aero = {
+        "D": segment.D,
+        "L_required": segment_lift_required(segment, W_current),
+        "q": 0.0,
+        "C_L_calc": 0.0,
+        "C_D_calc": 0.0,
+        "L_over_D_calc": 0.0,
+    }
+    return segment.D, aero
+
+
+def drag_from_speed_altitude(
+    W_current: float,
+    S_plan: float,
+    altitude_m: float,
+    velocity_m_s: float,
+    C_D0: float,
+    k_induced: float,
+    flight_path_angle_deg: float = 0.0,
+    n_normal_extra: float = 0.0,
+    g: float = 9.81,
+) -> dict[str, float]:
+    """
+    Standalone drag calculator where you choose speed and altitude yourself.
+
+    Uses:
+        rho = ISA density at altitude
+        q = 0.5 rho V²
+        L = W g cos(gamma), plus optional extra normal-load term
+        C_L = L / (q S_plan)
+        C_D = C_D0 + k_induced C_L²
+        D = q S_plan C_D
+
+    Inputs:
+        W_current             aircraft mass at that condition [kg]
+        S_plan                planform area [m²]
+        altitude_m            altitude [m]
+        velocity_m_s          true airspeed [m/s]
+        C_D0                  zero-lift / parasite / wave drag coefficient
+        k_induced             quadratic lift-drag coefficient
+        flight_path_angle_deg climb angle gamma [deg]
+        n_normal_extra        optional extra normal acceleration contribution
+    """
+
+    if W_current <= 0:
+        raise ValueError("W_current must be positive.")
+    if S_plan <= 0:
+        raise ValueError("S_plan must be positive.")
+    if altitude_m < 0:
+        raise ValueError("altitude_m must be non-negative.")
+    if velocity_m_s <= 0:
+        raise ValueError("velocity_m_s must be positive.")
+    if C_D0 <= 0:
+        raise ValueError("C_D0 must be positive.")
+    if k_induced < 0:
+        raise ValueError("k_induced must be non-negative.")
+
+    rho = isa_density(altitude_m)
+    a = speed_of_sound(altitude_m)
+    mach = velocity_m_s / a
+    q = 0.5 * rho * velocity_m_s**2
+
+    gamma_rad = math.radians(flight_path_angle_deg)
+    W_force = W_current * g
+    L_required = W_force * (math.cos(gamma_rad) + n_normal_extra)
+
+    C_L_calc = L_required / (q * S_plan)
+    C_D_calc = C_D0 + k_induced * C_L_calc**2
+    D_calc = q * S_plan * C_D_calc
+
+    return {
+        "altitude_m": altitude_m,
+        "velocity_m_s": velocity_m_s,
+        "mach": mach,
+        "rho": rho,
+        "q": q,
+        "L_required": L_required,
+        "C_L_calc": C_L_calc,
+        "C_D_calc": C_D_calc,
+        "L_over_D_calc": C_L_calc / C_D_calc if C_D_calc > 0 else 0.0,
+        "D": D_calc,
+    }
 
 
 def segment_weight_fraction(
     segment: MissionSegment,
     W_current: float,
-) -> tuple[float, float]:
+    S_plan: float,
+) -> tuple[float, float, dict[str, float]]:
     """
     Calculate W_i / W_{i-1} for one mission segment.
 
     Returns:
         fraction
         D_used
+        aero_info
     """
 
-    D_used = segment_drag(segment, W_current)
+    D_used, aero_info = segment_drag(segment, W_current, S_plan)
 
     if segment.mode == "fixed":
         fraction = segment.fixed_fraction
@@ -375,11 +565,12 @@ def segment_weight_fraction(
             f"Invalid segment fraction in segment '{segment.name}': {fraction}"
         )
 
-    return fraction, D_used
+    return fraction, D_used, aero_info
 
 
 def fuel_masses_from_segments(
     W_to: float,
+    S_plan: float,
     segments: list[MissionSegment],
     k_rf: float,
 ) -> tuple[
@@ -391,8 +582,9 @@ def fuel_masses_from_segments(
     list[float],
     float,
     dict[str, float],
+    dict[str, str],
     dict[str, float],
-    dict[str, float],
+    dict[str, dict[str, float]],
 ]:
     """
     Calculate total fuel mass and split into:
@@ -404,6 +596,8 @@ def fuel_masses_from_segments(
 
     if W_to <= 0:
         raise ValueError("W_to must be positive.")
+    if S_plan <= 0:
+        raise ValueError("S_plan must be positive.")
     if k_rf < 0:
         raise ValueError("k_rf must be non-negative.")
 
@@ -413,15 +607,17 @@ def fuel_masses_from_segments(
     segment_burns = {}
     segment_propulsion_modes = {}
     segment_drags = {}
+    segment_aero = {}
 
     mission_burn_JetA = 0.0
     mission_burn_LH2_ramjet = 0.0
     mission_burn_LH2_scramjet = 0.0
 
     for segment in segments:
-        fraction, D_used = segment_weight_fraction(
+        fraction, D_used, aero_info = segment_weight_fraction(
             segment=segment,
             W_current=W_current,
+            S_plan=S_plan,
         )
 
         burned_mass = W_current * (1.0 - fraction)
@@ -453,6 +649,7 @@ def fuel_masses_from_segments(
         segment_burns[segment.name] = burned_mass
         segment_propulsion_modes[segment.name] = segment.propulsion_mode
         segment_drags[segment.name] = D_used
+        segment_aero[segment.name] = aero_info
 
         W_current *= fraction
 
@@ -476,6 +673,7 @@ def fuel_masses_from_segments(
         segment_burns,
         segment_propulsion_modes,
         segment_drags,
+        segment_aero,
     )
 
 
@@ -548,8 +746,10 @@ def converge_TOGW_for_fixed_S_plan(
             segment_burns,
             segment_propulsion_modes,
             segment_drags,
+            segment_aero,
         ) = fuel_masses_from_segments(
             W_to=W_to,
+            S_plan=S_plan,
             segments=segments,
             k_rf=k_rf,
         )
@@ -607,6 +807,7 @@ def converge_TOGW_for_fixed_S_plan(
                 "segment_burns": segment_burns,
                 "segment_propulsion_modes": segment_propulsion_modes,
                 "segment_drags": segment_drags,
+                "segment_aero": segment_aero,
                 "total_mission_fraction": total_mission_fraction,
             }
 
@@ -1041,9 +1242,46 @@ if __name__ == "__main__":
     T_scramjet_cruise = 0.0
 
     # -------------------------------------------------------------------------
-    # Aerodynamic coefficients
+    # Aerodynamic polar coefficients
+    # -------------------------------------------------------------------------
+    # Replaces the old approach where both CL and CD were prescribed directly.
+    # Here CL is solved from:
+    #     CL = L_required / (q S_plan)
+    # and drag is calculated with:
+    #     CD = CD0 + k_induced CL²
+    #
+    # IMPORTANT:
+    # These CD0 and k values are placeholder conceptual sizing values.
+    # Replace them with wind-tunnel/CFD/empirical hypersonic polar data when available.
     # -------------------------------------------------------------------------
 
+    # Tuned first-pass aerodynamic polar coefficients
+    # CD = CD0 + k_induced * CL^2
+    # These are chosen to avoid unrealistically high L/D in hypersonic segments.
+
+    CD0_takeoff = 0.070
+    k_takeoff = 0.115
+
+    CD0_ascent_turbo = 0.025
+    k_ascent_turbo = 0.111
+
+    CD0_ascent_ramjet = 0.055
+    k_ascent_ramjet = 0.119
+
+    CD0_accel_ramjet = 0.040
+    k_accel_ramjet = 0.171
+
+    CD0_cruise_scramjet = 0.030
+    k_cruise_scramjet = 0.234
+
+    CD0_descent = 0.014
+    k_descent = 0.116
+
+    CD0_landing = 0.065
+    k_landing = 0.128
+
+    # Reference CL/CD values only for printing/comparison if desired.
+    # Actual drag uses the polar above.
     CL_takeoff = 0.45
     CD_takeoff = 0.085
 
@@ -1078,8 +1316,11 @@ if __name__ == "__main__":
             fixed_fraction=0.990,
             C_L=CL_takeoff,
             C_D=CD_takeoff,
+            C_D0=CD0_takeoff,
+            k_induced=k_takeoff,
             mach_drag=0.2,
             altitude_drag=h0,
+            flight_path_angle_deg=0.0,
             T=T_takeoff,
         ),
     ]
@@ -1100,8 +1341,11 @@ if __name__ == "__main__":
                 I_sp=2100.0,
                 C_L=CL_ascent_turbo,
                 C_D=CD_ascent_turbo,
+                C_D0=CD0_ascent_turbo,
+                k_induced=k_ascent_turbo,
                 mach_drag=1.25,
                 altitude_drag=0.5 * switch_state["h"],
+                flight_path_angle_deg=gamma_mission,
                 T=T_turbojet_operating,
             )
         )
@@ -1120,8 +1364,11 @@ if __name__ == "__main__":
                 I_sp=3500.0,
                 C_L=CL_ascent_ramjet,
                 C_D=CD_ascent_ramjet,
+                C_D0=CD0_ascent_ramjet,
+                k_induced=k_ascent_ramjet,
                 mach_drag=0.5 * (M_turbo_to_ram + M_at_cruise_height),
                 altitude_drag=0.5 * (switch_state["h"] + h_cruise),
+                flight_path_angle_deg=gamma_mission,
                 T=T_ramjet_acceleration,
             )
         )
@@ -1142,8 +1389,11 @@ if __name__ == "__main__":
                 I_sp=2100.0,
                 C_L=CL_ascent_turbo,
                 C_D=CD_ascent_turbo,
+                C_D0=CD0_ascent_turbo,
+                k_induced=k_ascent_turbo,
                 mach_drag=0.5 * M_at_cruise_height,
                 altitude_drag=0.5 * h_cruise,
+                flight_path_angle_deg=gamma_mission,
                 T=T_turbojet_operating,
             )
         )
@@ -1170,8 +1420,11 @@ if __name__ == "__main__":
             I_sp=3500.0,
             C_L=CL_accel_ramjet,
             C_D=CD_accel_ramjet,
+            C_D0=CD0_accel_ramjet,
+            k_induced=k_accel_ramjet,
             mach_drag=0.5 * (M_horizontal_start + M_cruise),
             altitude_drag=h_cruise,
+            flight_path_angle_deg=0.0,
             T=T_ramjet_acceleration,
         )
     )
@@ -1186,8 +1439,11 @@ if __name__ == "__main__":
             I_sp=1500.0,
             C_L=CL_cruise_scramjet,
             C_D=CD_cruise_scramjet,
+            C_D0=CD0_cruise_scramjet,
+            k_induced=k_cruise_scramjet,
             mach_drag=M_cruise,
             altitude_drag=h_cruise,
+            flight_path_angle_deg=0.0,
             T=T_scramjet_cruise,
             delta_t=cruise_time,
         )
@@ -1204,8 +1460,11 @@ if __name__ == "__main__":
                 fixed_fraction=1.0,
                 C_L=CL_descent,
                 C_D=CD_descent,
+                C_D0=CD0_descent,
+                k_induced=k_descent,
                 mach_drag=2.0,
                 altitude_drag=0.5 * h_cruise,
+                flight_path_angle_deg=-5.0,
             ),
 
             MissionSegment(
@@ -1216,8 +1475,11 @@ if __name__ == "__main__":
                 fixed_fraction=0.997,
                 C_L=CL_landing,
                 C_D=CD_landing,
+                C_D0=CD0_landing,
+                k_induced=k_landing,
                 mach_drag=0.25,
                 altitude_drag=h0,
+                flight_path_angle_deg=0.0,
                 T=T_takeoff,
             ),
         ]
@@ -1308,10 +1570,11 @@ if __name__ == "__main__":
         mode = result["segment_propulsion_modes"][segment_name]
         print(f"{segment_name:<42s} [{mode:<8s}]: {burn:.3f} kg")
 
-    print("\nSegment drag/thrust values")
-    print("--------------------------")
+    print("\nSegment drag/thrust/aero values")
+    print("-------------------------------")
     for segment in segments:
         D_used = result["segment_drags"].get(segment.name, 0.0)
+        aero = result["segment_aero"].get(segment.name, {})
 
         # For cruise T_eq_D, thrust equals drag by definition
         if segment.mode == "T_eq_D":
@@ -1319,20 +1582,17 @@ if __name__ == "__main__":
         else:
             T_display = segment.T
 
-        if segment.C_D > 0.0:
-            L_over_D = segment.C_L / segment.C_D
-        else:
-            L_over_D = 0.0
-
         print(
             f"{segment.name:<42s} "
             f"D={D_used:>12.3f} N   "
             f"T={T_display:>12.3f} N   "
-            f"CL={segment.C_L:>7.3f}   "
-            f"CD={segment.C_D:>7.4f}   "
-            f"L/D={L_over_D:>7.3f}   "
-            f"M_context={segment.mach_drag:>5.2f}   "
-            f"h_context={segment.altitude_drag:>8.1f} m"
+            f"CL_calc={aero.get('C_L_calc', 0.0):>8.4f}   "
+            f"CD_calc={aero.get('C_D_calc', 0.0):>8.5f}   "
+            f"L/D={aero.get('L_over_D_calc', 0.0):>8.3f}   "
+            f"q={aero.get('q', 0.0):>10.1f} Pa   "
+            f"gamma={segment.flight_path_angle_deg:>6.2f} deg   "
+            f"M={segment.mach_drag:>5.2f}   "
+            f"h={segment.altitude_drag:>8.1f} m"
         )
 
     print("\nWeight breakdown")
@@ -1357,3 +1617,41 @@ if __name__ == "__main__":
     print(f"V_void:              {result['V_void']:.3f} m³")
     print(f"V_payload:           {result['V_payload']:.3f} m³")
     print(f"V_tank_capacity:     {result['V_tank_capacity']:.3f} m³")
+
+    # -------------------------------------------------------------------------
+    # Standalone custom drag calculation
+    # -------------------------------------------------------------------------
+    # Change these inputs yourself to calculate drag at any speed and altitude.
+    # This uses the same parabolic drag polar:
+    #     CD = CD0 + k * CL^2
+    # -------------------------------------------------------------------------
+
+    custom_altitude_m = 35_000.0
+    custom_velocity_m_s = 1_500.0
+    custom_mass_kg = W_to
+    custom_CD0 = CD0_cruise_scramjet
+    custom_k = k_cruise_scramjet
+    custom_gamma_deg = 0.0
+
+    custom_drag = drag_from_speed_altitude(
+        W_current=custom_mass_kg,
+        S_plan=S_plan,
+        altitude_m=custom_altitude_m,
+        velocity_m_s=custom_velocity_m_s,
+        C_D0=custom_CD0,
+        k_induced=custom_k,
+        flight_path_angle_deg=custom_gamma_deg,
+    )
+
+    print("Custom drag calculation")
+    print("-----------------------")
+    print(f"Altitude:       {custom_drag['altitude_m']:.1f} m")
+    print(f"Velocity:       {custom_drag['velocity_m_s']:.1f} m/s")
+    print(f"Mach:           {custom_drag['mach']:.3f}")
+    print(f"rho:            {custom_drag['rho']:.6f} kg/m³")
+    print(f"q:              {custom_drag['q']:.1f} Pa")
+    print(f"L_required:     {custom_drag['L_required']:.3f} N")
+    print(f"CL:             {custom_drag['C_L_calc']:.4f}")
+    print(f"CD:             {custom_drag['C_D_calc']:.5f}")
+    print(f"L/D:            {custom_drag['L_over_D_calc']:.3f}")
+    print(f"Drag:           {custom_drag['D']:.3f} N")
