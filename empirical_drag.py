@@ -3,6 +3,8 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import PchipInterpolator
+from Engine.scramjet_01 import Engine as eng
+from Engine.scramjet_01 import run_altitude_mach_map
 
 
 # =============================================================================
@@ -274,11 +276,161 @@ def print_sample_table(
             f"{out['D'] / 1000.0:12.2f}"
         )
 
+def run_drag_altitude_mach_map(
+    mach_range=None,
+    alt_range=None,
+    alpha_deg=3.5,
+    S_ref=600.0,
+):
+    """
+    Returns:
+        Drag_map [alt, mach]
+        Drag_table (pandas)
+    """
+
+    if mach_range is None:
+        mach_range = np.arange(5.0, 10.5, 0.5)
+
+    if alt_range is None:
+        alt_range = np.arange(25.0, 32.0, 1.0)
+
+    DRAG_map = np.full((len(alt_range), len(mach_range)), np.nan)
+
+    rows = []
+
+    for i, h_km in enumerate(alt_range):
+        h_m = h_km * 1000.0
+
+        for j, M in enumerate(mach_range):
+
+            try:
+                out = drag_from_mach_alpha(
+                    M=M,
+                    alpha_deg=alpha_deg,
+                    altitude_m=h_m,
+                    S_ref=S_ref,
+                    clamp_mach=True,
+                )
+
+                DRAG_map[i, j] = out["D"]
+
+                rows.append({
+                    "Altitude_km": h_km,
+                    "Mach": M,
+                    "Drag_N": out["D"],
+                    "Drag_kN": out["D"] / 1000.0,
+                    "CL": out["CL"],
+                    "CD": out["CD"],
+                    "q_Pa": out["q"],
+                    "regime": out["regime"],
+                })
+
+                print(
+                    f"h={h_km:.1f} km | M={M:.2f} | "
+                    f"D={out['D']:.1f} N"
+                )
+
+            except Exception as e:
+                print(f"FAILED h={h_km}, M={M}")
+                print(e)
+                DRAG_map[i, j] = np.nan
+
+    import pandas as pd
+    table = pd.DataFrame(rows)
+
+    # -----------------------------------------------------------------------
+    # Plot contour
+    # -----------------------------------------------------------------------
+    M_grid, H_grid = np.meshgrid(mach_range, alt_range)
+
+    plt.figure(figsize=(10, 6))
+    cont = plt.contourf(M_grid, H_grid, DRAG_map / 1000.0, levels=40)
+    plt.colorbar(cont).set_label("Drag [kN]")
+    plt.xlabel("Mach")
+    plt.ylabel("Altitude [km]")
+    plt.title(f"Drag Map (α = {alpha_deg}°)")
+    plt.tight_layout()
+
+    plt.show()
+
+    return DRAG_map, table
+
+def run_net_force_map(eng, alpha_deg=3.5, S_ref=600.0):
+
+    # -----------------------------------------------------------------------
+    # Get thrust map
+    # -----------------------------------------------------------------------
+    ISP_map, THRUST_map, table = run_altitude_mach_map(eng)
+
+    mach_range = np.arange(5.0, 10.5, 0.5)
+    alt_range  = np.arange(25.0, 32.0, 1.0)
+
+    # -----------------------------------------------------------------------
+    # Compute drag map
+    # -----------------------------------------------------------------------
+    DRAG_map, drag_table = run_drag_altitude_mach_map(
+        mach_range=mach_range,
+        alt_range=alt_range,
+        alpha_deg=alpha_deg,
+        S_ref=S_ref
+    )
+
+    # -----------------------------------------------------------------------
+    # Net force map
+    # -----------------------------------------------------------------------
+    NET_map = THRUST_map - DRAG_map
+
+    # -----------------------------------------------------------------------
+    # Plot: Net force contour
+    # -----------------------------------------------------------------------
+    M_grid, H_grid = np.meshgrid(mach_range, alt_range)
+
+    plt.figure(figsize=(10, 6))
+
+    levels = 50
+    cont = plt.contourf(M_grid, H_grid, NET_map / 1000.0, levels=levels, cmap="coolwarm")
+
+    plt.colorbar(cont).set_label("Net Force [kN] (Thrust - Drag)")
+
+    plt.contour(
+        M_grid,
+        H_grid,
+        NET_map,
+        levels=[0],
+        colors="black",
+        linewidths=2
+    )
+
+    plt.xlabel("Mach")
+    plt.ylabel("Altitude [km]")
+    plt.title(f"Net Propulsive Map (α = {alpha_deg}°)")
+
+    plt.tight_layout()
+    plt.show()
+
+    # -----------------------------------------------------------------------
+    # Flight envelope mask
+    # -----------------------------------------------------------------------
+    feasible = NET_map > 0
+
+    print("\nFlight envelope summary:")
+    print(f"Max net thrust: {np.nanmax(NET_map):.1f} N")
+    print(f"Min net thrust: {np.nanmin(NET_map):.1f} N")
+    print(f"Feasible points (T > D): {np.sum(feasible)} / {feasible.size}")
+
+    return {
+        "thrust_map": THRUST_map,
+        "drag_map": DRAG_map,
+        "net_map": NET_map,
+        "thrust_table": table,
+        "drag_table": drag_table,
+        "feasible_mask": feasible,
+    }
 
 if __name__ == "__main__":
     # Tweak these for your vehicle / mission point.
-    altitude_m = 35_000.0
-    S_ref = 425.682
+    altitude_m = 25_000.0
+    S_ref = 600.0
 
     alpha_values_deg = [-1.0, 0.0, 1.0, 2.0, 3.0, 3.5, 4.0, 5.0, 7.5, 10.0]
 
@@ -297,3 +449,13 @@ if __name__ == "__main__":
         n_mach=500,
         save=False,
     )
+
+    drag_map, drag_table =run_drag_altitude_mach_map(
+    mach_range=None,
+    alt_range=None,
+    alpha_deg=3.5,
+    S_ref=400.0)
+
+    eng = eng()
+
+    results =run_net_force_map(eng, alpha_deg=3.5, S_ref=600.0)

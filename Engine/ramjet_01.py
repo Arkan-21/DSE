@@ -495,7 +495,7 @@ class ShapiroODE:
         W_in     = mix.W_mix(Y_in)
         R_in     = R_UNIV / W_in
         gamma_in = cp_in / max(cp_in - R_in, 1e-30)
-        V2_in    = max(Ma2_in, 1.000001) * gamma_in * R_in * T_in
+        V2_in    = max(Ma2_in, 10e-6) * gamma_in * R_in * T_in
         h_in     = mix.h_mix(Y_in, T_in)
         ht_in    = h_in + 0.5 * V2_in
 
@@ -605,14 +605,14 @@ class ShapiroODE:
 
         # ---- events -------------------------------------------------------
         def choke_event(x, y):    return y[0] - 1.0
-        choke_event.terminal = True; choke_event.direction = -1
+        choke_event.terminal = True; choke_event.direction = 1
 
         def pressure_event(x, y): return y[1] - 1.0
         pressure_event.terminal = True; pressure_event.direction = -1
 
         # ---- integrate ----------------------------------------------------
         y0 = [
-            max(Ma2_in, 1.000001),
+            max(Ma2_in, 10e-6),
             max(p_in,   1.0),
             float(ht_in),
             max(mdot_in, 1e-9),
@@ -706,17 +706,17 @@ class ShapiroODE:
 # Engine
 # ---------------------------------------------------------------------------
 class Engine:
-    L01 = 0.2
-    L12 = 0.40
-    L23 = 0.01
+    L01 = 0.4
+    L12 = 0.10
+    L23 = 0.1
     L34 = 1.00
     L45 = 1.0
     alpha12 = 1.0
-    alpha13 = 1.1
-    alpha14 = 2.4
+    alpha13 = 1.0
+    alpha14 = 1.0
     alpha05 = 2.0
 
-    EPSILON     = 0.4
+    EPSILON     = 0.2
     ETA_C       = 0.9
     CF_DEFAULT  = 0.003
 
