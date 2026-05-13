@@ -429,8 +429,8 @@ def run_net_force_map(eng, alpha_deg=3.5, S_ref=600.0):
 
 if __name__ == "__main__":
     # Tweak these for your vehicle / mission point.
-    altitude_m = 25_000.0
-    S_ref = 600.0
+    altitude_m = 35_000.0
+    S_ref = 425.682
 
     alpha_values_deg = [-1.0, 0.0, 1.0, 2.0, 3.0, 3.5, 4.0, 5.0, 7.5, 10.0]
 

@@ -12,7 +12,7 @@ altitude = 25000.0  # [m]
 
 nose_radius = 0.025
 emissivity = 0.85
-plate_length = 1.0
+plate_length = 2.0
 
 sigma = 5.670374419e-8
 R = 287.0
@@ -91,7 +91,6 @@ def solve_equilibrium_temperature(h, T_aw, emissivity):
 
     return T
 
-
 # =============================================================================
 # NORMAL SHOCK RELATIONS
 # =============================================================================
@@ -117,6 +116,45 @@ def normal_shock(M1, T1, P1, rho1):
     T2 = T1 * T2_T1
 
     return M2, T2, P2, rho2
+
+
+# =============================================================================
+# OBLIQUE SHOCK (M-BETA-THETA)
+# =============================================================================
+
+def theta_from_beta(M, beta, gamma):
+    """
+    Returns flow deflection angle theta (rad)
+    from M-beta-theta relation
+    """
+
+    term1 = 2 / np.tan(beta)
+    term2 = (M**2 * np.sin(beta)**2 - 1)
+    term3 = M**2 * (gamma + np.cos(2 * beta)) + 2
+
+    return np.arctan(term1 * term2 / term3)
+
+
+def oblique_shock(M1, beta, T1, P1, rho1):
+
+    gamma1 = gamma_air(T1)
+
+    # Normal component
+    Mn1 = M1 * np.sin(beta)
+
+    if Mn1 <= 1.0:
+        return None  # no shock
+
+    # Normal shock on Mn1
+    Mn2, T2, P2, rho2 = normal_shock(Mn1, T1, P1, rho1)
+
+    # Flow deflection
+    theta = theta_from_beta(M1, beta, gamma1)
+
+    # Downstream Mach
+    M2 = Mn2 / np.sin(beta - theta)
+
+    return M2, T2, P2, rho2, theta
 
 
 # =============================================================================
@@ -239,74 +277,114 @@ Re_transition_start = 1e6 * M_edge
 Re_transition_end = 3e6 * M_edge
 
 # =============================================================================
-# SURFACE WALKDOWN
+# SHOCK ANGLE RANGE
 # =============================================================================
 
+beta_deg_range = np.linspace(15, 75, 6)  # degrees
+beta_rad_range = np.radians(beta_deg_range)
+
+# Storage for plotting
+all_temperature_profiles = []
+
+# =============================================================================
+# LOOP OVER SHOCK ANGLES
+# =============================================================================
 x_vals = np.linspace(1e-4, plate_length, 700)
 
-T_physical = []
-T_conservative = []
+for beta_deg, beta in zip(beta_deg_range, beta_rad_range):
 
-for x in x_vals:
+    result = oblique_shock(mach, beta, T_inf, P_inf, rho_inf)
 
-    Re_x = rho_edge * u_edge * x / mu_edge
+    if result is None:
+        continue
 
-    # Laminar
-    Nu_lam = 0.332 * Re_x**0.5 * pr_edge**(1/3)
-    h_lam = Nu_lam * k_edge / x
-    T_lam = solve_equilibrium_temperature(h_lam, T_aw_lam, emissivity)
+    M_edge, T_edge, P_edge, rho_edge, theta = result
 
-    # Turbulent
-    Nu_turb = 0.0296 * Re_x**0.8 * pr_edge**(1/3)
-    h_turb = Nu_turb * k_edge / x
-    T_turb = solve_equilibrium_temperature(h_turb, T_aw_turb, emissivity)
+    gamma_edge = gamma_air(T_edge)
+    u_edge = M_edge * np.sqrt(gamma_edge * R * T_edge)
 
-    # Transition blend
-    if Re_x <= Re_transition_start:
-        blend = 0.0
-    elif Re_x >= Re_transition_end:
-        blend = 1.0
-    else:
-        blend = (Re_x - Re_transition_start) / (
-            Re_transition_end - Re_transition_start
-        )
+    print("\n================================================")
+    print(f"SHOCK ANGLE β = {beta_deg:.1f} deg")
+    print("================================================")
+    print(f"Deflection θ = {np.degrees(theta):.2f} deg")
+    print(f"M_edge       = {M_edge:.3f}")
+    print(f"T_edge       = {T_edge:.2f} K")
 
-    T_boundary = (1 - blend) * T_lam + blend * T_turb
+    # Edge properties
+    cp_edge = cp_air(T_edge)
+    pr_edge = pr_air(T_edge)
+    mu_edge = viscosity_sutherland(T_edge)
+    k_edge = conductivity(mu_edge, cp_edge, pr_edge)
 
-    # Stagnation blending
-    stag_blend = np.exp(-x / 0.03)
+    # Adiabatic wall temps
+    r_lam = np.sqrt(pr_edge)
+    r_turb = pr_edge**(1/3)
 
-    T_phys = stag_blend * T_stag + (1 - stag_blend) * T_boundary
-    T_cons = stag_blend * T_stag + (1 - stag_blend) * T_turb
+    T_aw_lam = T_edge * (1 + r_lam * 0.5 * (gamma_edge - 1) * M_edge**2)
+    T_aw_turb = T_edge * (1 + r_turb * 0.5 * (gamma_edge - 1) * M_edge**2)
 
-    T_physical.append(T_phys)
-    T_conservative.append(T_cons)
+    # Transition
+    Re_transition_start = 1e6 * M_edge
+    Re_transition_end = 3e6 * M_edge
+
+    # Surface walkdown
+    T_profile = []
+
+    for x in x_vals:
+
+        Re_x = rho_edge * u_edge * x / mu_edge
+
+        # Laminar
+        Nu_lam = 0.332 * Re_x**0.5 * pr_edge**(1/3)
+        h_lam = Nu_lam * k_edge / x
+        T_lam = solve_equilibrium_temperature(h_lam, T_aw_lam, emissivity)
+
+        # Turbulent
+        Nu_turb = 0.0296 * Re_x**0.8 * pr_edge**(1/3)
+        h_turb = Nu_turb * k_edge / x
+        T_turb = solve_equilibrium_temperature(h_turb, T_aw_turb, emissivity)
+
+        # Blend
+        if Re_x <= Re_transition_start:
+            blend = 0.0
+        elif Re_x >= Re_transition_end:
+            blend = 1.0
+        else:
+            blend = (Re_x - Re_transition_start) / (
+                Re_transition_end - Re_transition_start
+            )
+
+        T_boundary = (1 - blend) * T_lam + blend * T_turb
+
+        # Stagnation blending (still from freestream)
+        stag_blend = np.exp(-x / 0.03)
+
+        T_phys = stag_blend * T_stag + (1 - stag_blend) * T_boundary
+
+        T_profile.append(T_phys)
+
+    all_temperature_profiles.append((beta_deg, T_profile))
+
 
 # =============================================================================
-# RESULTS
-# =============================================================================
-
-print("\n================================================")
-print("FINAL TEMPERATURES")
-print("================================================")
-
-print(f"Physical max T     = {max(T_physical):.2f} K")
-print(f"Conservative max T = {max(T_conservative):.2f} K")
-
-# =============================================================================
-# PLOT
+# PLOT MULTI-ANGLE RESULTS
 # =============================================================================
 
 plt.figure(figsize=(13, 6))
 
-plt.plot(x_vals, T_physical, linewidth=3, label="Physical")
-plt.plot(x_vals, T_conservative, "--", linewidth=3, label="Conservative")
+for beta_deg, T_profile in all_temperature_profiles:
+    plt.plot(
+        x_vals,
+        T_profile,
+        linewidth=2,
+        label=f"β = {beta_deg:.0f}°"
+    )
 
 plt.scatter([0], [T_stag], s=120, label="Stagnation")
 
 plt.xlabel("Distance [m]")
-plt.ylabel("Temperature [K]")
-plt.title("Mach Surface Heating Distribution")
+plt.ylabel("Equilibrium Temperature [K]")
+plt.title("Surface Temperature vs Shock Angle (Oblique Shock Model)")
 
 plt.grid(True)
 plt.legend()

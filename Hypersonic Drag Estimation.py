@@ -9,11 +9,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- 1. Configuratie & Input ---
-w_tog = 250000          # Massa (kg)
-s_plan = 450            # Oppervlakte (m2)
+w_tog = 111389         # Massa (kg)
+s_plan = 425            # Oppervlakte (m2)
 accel_g_target = 0.15   # Doelversnelling (g)
 g = 9.81
-cd_0 = 0.00567          # Jouw basis-frictie
+#cd_0 = 0.00567          # Jouw basis-frictie
 rho = 0.05              # Luchtdichtheid op kruishoogte (kg/m3)
 v_sound = 300.0         # Geluidssnelheid op hoogte (m/s)
 
@@ -42,8 +42,9 @@ for M in mach_range:
     alpha_rad = np.sqrt(cl_needed / 2)
     
     # D. Drag Coefficient (Newtonian): Cd_wave = 2 * sin^3(alpha)
-    cd_wave = 2 * (alpha_rad**3)
-    cd_total = cd_0 + cd_wave
+    cd_induced = 2 * (alpha_rad**3)
+    cd_0 = 0.005 + 0.001*M
+    cd_total = cd_0 + cd_induced
     
     # E. Krachten (Newton)
     drag_force = 0.5 * rho * (V**2) * s_plan * cd_total
