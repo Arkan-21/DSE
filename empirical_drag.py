@@ -3,7 +3,7 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import PchipInterpolator
-from Engine.scramjet_01 import Engine as eng
+from Engine.scramjet_01 import Scramjet as Scramjet_engine
 from Engine.scramjet_01 import run_altitude_mach_map
 
 
@@ -355,12 +355,12 @@ def run_drag_altitude_mach_map(
 
     return DRAG_map, table
 
-def run_net_force_map(eng, alpha_deg=3.5, S_ref=600.0):
+def run_net_force_map(Scramjet_engine, alpha_deg=3.5, S_ref=600.0):
 
     # -----------------------------------------------------------------------
     # Get thrust map
     # -----------------------------------------------------------------------
-    ISP_map, THRUST_map, table = run_altitude_mach_map(eng)
+    ISP_map, THRUST_map, table = run_altitude_mach_map(Scramjet_engine)
 
     mach_range = np.arange(5.0, 10.5, 0.5)
     alt_range  = np.arange(25.0, 32.0, 1.0)
@@ -456,6 +456,6 @@ if __name__ == "__main__":
     alpha_deg=3.5,
     S_ref=400.0)
 
-    eng = eng()
+    Scramjet_engine = Scramjet_engine()
 
-    results =run_net_force_map(eng, alpha_deg=3.5, S_ref=600.0)
+    results =run_net_force_map(Scramjet_engine, alpha_deg=3.5, S_ref=600.0)
