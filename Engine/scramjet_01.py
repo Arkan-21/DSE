@@ -707,7 +707,7 @@ class ShapiroODE:
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
-class Engine:
+class Scramjet:
     L01 = 0.50
     L12 = 0.40
     L23 = 0.01
@@ -1422,7 +1422,7 @@ class Engine:
 # ---------------------------------------------------------------------------
 def altitude_mach(self, h_km, Ma0):
     """Helper to run a single case and print results."""
-    eng = Engine()
+    eng = Scramjet()
     inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
     iso  = eng.isolator_properties(inp)
     sec2 = eng.combustor_properties2(iso)
@@ -1610,7 +1610,7 @@ def run_mdot_sweep(eng, h_km=25.0, Ma0=5.0, phi=0.5):
     return np.array(ISP_list), np.array(THRUST_list)
 
 if __name__ == "__main__":
-    eng = Engine()
+    eng = Scramjet()
 
     h_km = 25.0
     Ma0  = 5.0

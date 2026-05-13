@@ -645,7 +645,7 @@ class ShapiroODE:
 # ---------------------------------------------------------------------------
 # Ramjet Engine
 # ---------------------------------------------------------------------------
-class Engine:
+class Ramjet:
     """
     1-D Ramjet cycle model.
  
@@ -1384,7 +1384,7 @@ class Engine:
 # ---------------------------------------------------------------------------
 def altitude_mach(self, h_km, Ma0):
     """Helper to run a single case and print results."""
-    eng = Engine()
+    eng = Ramjet()
     inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
     iso  = eng.isolator_properties(inp)
     sec2 = eng.combustor_properties2(iso)
@@ -1413,7 +1413,7 @@ def print_section(title, props, fields):
 
 
 if __name__ == "__main__":
-    eng = Engine()
+    eng = Ramjet()
 
     h_km = 20.0
     Ma0  = 3.0
