@@ -100,9 +100,20 @@ A_POLAR_DATA = np.array([0.3804, 0.3418, 0.3459, 0.4006, 0.6049, 1.0314, 1.2753,
 B_POLAR_DATA = np.array([-0.0011, 0.0100, 0.0012, 0.0037, 0.0010, 0.0145, 0.0354, 0.0962])
 C_POLAR_DATA = np.array([0.0070, 0.0174, 0.0382, 0.0337, 0.0268, 0.0121, 0.0101, 0.0081])
 
-A_POLAR_INTERP = PchipInterpolator(MACH_POLAR_DATA, A_POLAR_DATA)
-B_POLAR_INTERP = PchipInterpolator(MACH_POLAR_DATA, B_POLAR_DATA)
-C_POLAR_INTERP = PchipInterpolator(MACH_POLAR_DATA, C_POLAR_DATA)
+A_POLAR_INTERP = PchipInterpolator(MACH_POLAR_DATA, A_POLAR_DATA, extrapolate=True)
+B_POLAR_INTERP = PchipInterpolator(MACH_POLAR_DATA, B_POLAR_DATA, extrapolate=True)
+C_POLAR_INTERP = PchipInterpolator(MACH_POLAR_DATA, C_POLAR_DATA, extrapolate=True)
+
+
+def interpolation_status(x: float, data: np.ndarray) -> str:
+    x_min = float(np.min(data))
+    x_max = float(np.max(data))
+
+    if x < x_min:
+        return "extrapolated_low"
+    if x > x_max:
+        return "extrapolated_high"
+    return "interpolated"
 
 
 def mach_regime(M: float) -> str:
@@ -143,25 +154,33 @@ CL_ALPHA_INTERCEPT_DATA = np.array([
     -0.0048,
 ])
 
-CL_ALPHA_SLOPE_INTERP = PchipInterpolator(MACH_CL_ALPHA_DATA, CL_ALPHA_SLOPE_DATA)
-CL_ALPHA_INTERCEPT_INTERP = PchipInterpolator(MACH_CL_ALPHA_DATA, CL_ALPHA_INTERCEPT_DATA)
+CL_ALPHA_SLOPE_INTERP = PchipInterpolator(
+    MACH_CL_ALPHA_DATA,
+    CL_ALPHA_SLOPE_DATA,
+    extrapolate=True,
+)
+
+CL_ALPHA_INTERCEPT_INTERP = PchipInterpolator(
+    MACH_CL_ALPHA_DATA,
+    CL_ALPHA_INTERCEPT_DATA,
+    extrapolate=True,
+)
 
 
 def cl_from_mach_alpha(
     M: float,
     alpha_deg: float,
-    clamp_mach: bool = True,
+    clamp_mach: bool = False,
 ) -> tuple[float, dict[str, float | str]]:
     M_original = float(M)
 
     if clamp_mach:
-        M_used = float(np.clip(M_original, MACH_CL_ALPHA_DATA.min(), MACH_CL_ALPHA_DATA.max()))
+        M_used = float(np.clip(
+            M_original,
+            MACH_CL_ALPHA_DATA.min(),
+            MACH_CL_ALPHA_DATA.max(),
+        ))
     else:
-        if M_original < MACH_CL_ALPHA_DATA.min() or M_original > MACH_CL_ALPHA_DATA.max():
-            raise ValueError(
-                f"Mach number {M_original:.3f} outside available C_L-alpha range "
-                f"{MACH_CL_ALPHA_DATA.min():.2f} <= M <= {MACH_CL_ALPHA_DATA.max():.2f}"
-            )
         M_used = M_original
 
     slope = float(CL_ALPHA_SLOPE_INTERP(M_used))
@@ -174,21 +193,58 @@ def cl_from_mach_alpha(
         "cl_alpha_intercept": intercept,
         "mach_original_cl_alpha": M_original,
         "mach_used_for_cl_alpha": M_used,
+        "mach_cl_alpha_status": interpolation_status(M_original, MACH_CL_ALPHA_DATA),
         "mach_regime_cl_alpha": mach_regime(M_original),
     }
 
 
-def cd_from_mach_cl(M: float, CL: float, clamp_mach: bool = True) -> tuple[float, dict[str, float | str]]:
+def alpha_required_from_mach_cl(
+    M: float,
+    CL_required: float,
+    clamp_mach: bool = False,
+) -> tuple[float, dict[str, float | str]]:
     M_original = float(M)
 
     if clamp_mach:
-        M_used = float(np.clip(M_original, MACH_POLAR_DATA.min(), MACH_POLAR_DATA.max()))
+        M_used = float(np.clip(
+            M_original,
+            MACH_CL_ALPHA_DATA.min(),
+            MACH_CL_ALPHA_DATA.max(),
+        ))
     else:
-        if M_original < MACH_POLAR_DATA.min() or M_original > MACH_POLAR_DATA.max():
-            raise ValueError(
-                f"Mach number {M_original:.3f} outside available polar range "
-                f"{MACH_POLAR_DATA.min():.2f} <= M <= {MACH_POLAR_DATA.max():.2f}"
-            )
+        M_used = M_original
+
+    slope = float(CL_ALPHA_SLOPE_INTERP(M_used))
+    intercept = float(CL_ALPHA_INTERCEPT_INTERP(M_used))
+
+    if abs(slope) < 1e-12:
+        raise ValueError(f"C_L-alpha slope is too close to zero at Mach {M_used:.3f}.")
+
+    alpha_required_deg = (CL_required - intercept) / slope
+
+    return alpha_required_deg, {
+        "alpha_required_deg": alpha_required_deg,
+        "cl_alpha_slope_per_deg_required": slope,
+        "cl_alpha_intercept_required": intercept,
+        "mach_used_for_alpha_required": M_used,
+        "mach_alpha_required_status": interpolation_status(M_original, MACH_CL_ALPHA_DATA),
+    }
+
+
+def cd_from_mach_cl(
+    M: float,
+    CL: float,
+    clamp_mach: bool = False,
+) -> tuple[float, dict[str, float | str]]:
+    M_original = float(M)
+
+    if clamp_mach:
+        M_used = float(np.clip(
+            M_original,
+            MACH_POLAR_DATA.min(),
+            MACH_POLAR_DATA.max(),
+        ))
+    else:
         M_used = M_original
 
     a = float(A_POLAR_INTERP(M_used))
@@ -203,6 +259,7 @@ def cd_from_mach_cl(M: float, CL: float, clamp_mach: bool = True) -> tuple[float
         "c_polar": c,
         "mach_original": M_original,
         "mach_used_for_polar": M_used,
+        "mach_polar_status": interpolation_status(M_original, MACH_POLAR_DATA),
         "mach_regime": mach_regime(M_original),
     }
 
@@ -247,7 +304,7 @@ def thrust_from_mach_altitude(
     propulsion_type: str,
     M: float,
     altitude_m: float,
-    clamp_altitude: bool = True,
+    clamp_altitude: bool = False,
     engine_count: int | None = None,
     minimum_thrust_N: float = 0.0,
 ) -> tuple[float, dict[str, float | str]]:
@@ -265,11 +322,6 @@ def thrust_from_mach_altitude(
     if clamp_altitude:
         altitude_used = float(np.clip(altitude_m, altitudes.min(), altitudes.max()))
     else:
-        if altitude_m < altitudes.min() or altitude_m > altitudes.max():
-            raise ValueError(
-                f"Altitude {altitude_m:.1f} m outside available range for {propulsion_type}: "
-                f"{altitudes.min():.1f} to {altitudes.max():.1f} m."
-            )
         altitude_used = float(altitude_m)
 
     thrust_curve_values = np.array([
@@ -277,7 +329,11 @@ def thrust_from_mach_altitude(
         for h in altitudes
     ])
 
-    thrust_alt_interp = PchipInterpolator(altitudes, thrust_curve_values)
+    thrust_alt_interp = PchipInterpolator(
+        altitudes,
+        thrust_curve_values,
+        extrapolate=True,
+    )
     thrust_curve_value = float(thrust_alt_interp(altitude_used))
 
     thrust_per_engine_N = thrust_curve_value * THRUST_CURVE_TO_N
@@ -296,6 +352,7 @@ def thrust_from_mach_altitude(
         "engine_count": engine_count,
         "thrust_total_N_raw": thrust_total_N_raw,
         "thrust_total_N": thrust_total_N,
+        "altitude_interpolation_status": interpolation_status(altitude_m, altitudes),
     }
 
 
@@ -371,13 +428,13 @@ def scheduled_alpha_for_segment(segment: MissionSegment) -> float:
         if M >= 5.0:
             return 3.5
         return 3.0
-    if "horizontal_accel" in name:
+    if "horizontal_accel" in name or "accel" in name:
         if M >= 5.0:
             return 3.0
         if M >= 2.0:
             return 3.5
         return 4.0
-    if "ascent" in name:
+    if "ascent" in name or "climb" in name:
         if M < 0.8:
             return 7.5
         if M < 1.2:
@@ -401,39 +458,69 @@ def scheduled_alpha_for_segment(segment: MissionSegment) -> float:
 
 def scheduled_cl_for_segment(segment: MissionSegment) -> tuple[float, dict[str, float | str]]:
     alpha_deg = scheduled_alpha_for_segment(segment)
-    return cl_from_mach_alpha(segment.mach_drag, alpha_deg, clamp_mach=True)
+    return cl_from_mach_alpha(segment.mach_drag, alpha_deg, clamp_mach=False)
 
 
-def segment_aero_from_polar(segment: MissionSegment, W_current: float, S_plan: float) -> dict[str, Any]:
+def segment_aero_from_polar(
+    segment: MissionSegment,
+    W_current: float,
+    S_plan: float,
+) -> dict[str, Any]:
     if S_plan <= 0:
         raise ValueError("S_plan must be positive.")
     if segment.mach_drag <= 0.0:
         raise ValueError(f"Segment '{segment.name}' needs mach_drag > 0 for drag calculation.")
 
     q = dynamic_pressure_from_mach_altitude(segment.mach_drag, segment.altitude_drag)
+
     if q <= 0:
         raise ValueError(f"Segment '{segment.name}' dynamic pressure is non-positive.")
 
     L_required = segment_lift_required(segment, W_current)
-    C_L_force_balance = L_required / (q * S_plan)
+    C_L_required = L_required / (q * S_plan)
 
-    C_L_calc, cl_alpha_info = scheduled_cl_for_segment(segment)
-    C_D_calc, polar_info = cd_from_mach_cl(segment.mach_drag, C_L_calc, clamp_mach=True)
+    # Diagnostic only: what your scheduled alpha would have produced
+    C_L_scheduled, cl_alpha_info = scheduled_cl_for_segment(segment)
+
+    # Actual model fix: use the force-balance CL for drag
+    C_L_used = C_L_required
+
+    C_D_calc, polar_info = cd_from_mach_cl(
+        segment.mach_drag,
+        C_L_used,
+        clamp_mach=False,
+    )
 
     D_calc = q * S_plan * C_D_calc
-    lift_balance_ratio = C_L_calc / C_L_force_balance if C_L_force_balance > 0 else 0.0
+
+    alpha_required_deg, alpha_required_info = alpha_required_from_mach_cl(
+        segment.mach_drag,
+        C_L_required,
+        clamp_mach=False,
+    )
+
+    lift_balance_ratio = C_L_scheduled / C_L_required if C_L_required > 0 else 0.0
 
     return {
         "D": D_calc,
         "L_required": L_required,
         "q": q,
-        "C_L_calc": C_L_calc,
-        "C_L_force_balance": C_L_force_balance,
+
+        # Actual coefficients used in the sizing loop
+        "C_L_calc": C_L_used,
+        "C_L_used": C_L_used,
+        "C_L_force_balance": C_L_required,
         "C_D_calc": C_D_calc,
-        "L_over_D_calc": C_L_calc / C_D_calc if C_D_calc > 0 else 0.0,
+        "L_over_D_calc": C_L_used / C_D_calc if C_D_calc > 0 else 0.0,
+
+        # Diagnostics
+        "C_L_scheduled": C_L_scheduled,
         "lift_balance_ratio": lift_balance_ratio,
-        "force_balance_warning": lift_balance_ratio < 0.75,
+        "force_balance_warning": abs(C_L_used - C_L_required) / C_L_required > 0.05
+        if C_L_required > 0 else False,
+
         **cl_alpha_info,
+        **alpha_required_info,
         **polar_info,
     }
 
@@ -501,11 +588,16 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float, S_plan: f
                 f"T_available={T_available:.3f} N, D={D_used:.3f} N."
             )
 
-        if T_used <= D_used:
+        thrust_margin_numerical_tol = 1e-6 * max(1.0, D_used)
+        if T_used <= D_used + thrust_margin_numerical_tol:
             raise ValueError(
                 f"For segment '{segment.name}', acceleration-limited thrust is below drag. "
-                f"T_used={T_used:.3f} N, D={D_used:.3f} N. "
-                f"Try increasing max_total_accel_g or changing trajectory."
+                f"T_used={T_used:.3f} N, D={D_used:.3f} N, "
+                f"T_accel_limited={T_accel_limited:.3f} N, "
+                f"T_available={T_available:.3f} N, "
+                f"a_x_allow={a_x_allow:.6f} m/s², "
+                f"max_total_accel_g={segment.max_total_accel_g:.3f}, "
+                f"W_current={W_current:.3f} kg."
             )
 
         axial_accel_m_s2 = (T_used - D_used) / W_current
@@ -518,16 +610,32 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float, S_plan: f
 
         delta_energy_height = segment.delta_h + (segment.V_final**2 - segment.V_initial**2) / (2.0 * segment.g)
 
+        thrust_excess_ratio = 1.0 - D_used / T_used
+        if thrust_excess_ratio <= 0.0:
+            raise ValueError(
+                f"For segment '{segment.name}', thrust excess is non-positive. "
+                f"T_used={T_used:.3f} N, D={D_used:.3f} N."
+            )
+
         exponent = -delta_energy_height / (
             segment.I_sp
             * segment.V_average
-            * (1.0 - D_used / T_used)
+            * thrust_excess_ratio
         )
+
+        if exponent < -700.0:
+            raise ValueError(
+                f"For segment '{segment.name}', fuel fraction underflow. "
+                f"exponent={exponent:.3f}, T_used={T_used:.3f} N, D={D_used:.3f} N, "
+                f"T/D={T_used / D_used:.4f}, 1-D/T={thrust_excess_ratio:.6f}."
+            )
+
         fraction = math.exp(exponent)
 
         aero_info["T_available"] = T_available
         aero_info["T_accel_limited"] = T_accel_limited
         aero_info["T_used"] = T_used
+        aero_info["thrust_excess_ratio"] = thrust_excess_ratio
         aero_info["axial_accel_m_s2"] = axial_accel_m_s2
         aero_info["vertical_accel_m_s2"] = vertical_accel_m_s2
         aero_info["total_accel_m_s2"] = total_accel_m_s2
@@ -956,6 +1064,199 @@ def converge_S_plan_and_TOGW(
 # Mission profile helper
 # =============================================================================
 
+def acceleration_distance(V_initial: float, V_final: float, accel: float) -> float:
+    if accel <= 0:
+        raise ValueError("accel must be positive.")
+    return abs(V_final**2 - V_initial**2) / (2.0 * accel)
+
+
+def climb_distance_from_gamma(delta_h: float, gamma_deg: float) -> float:
+    gamma_rad = math.radians(gamma_deg)
+
+    if abs(math.tan(gamma_rad)) < 1e-12:
+        raise ValueError("gamma_deg too close to zero for climb distance.")
+
+    return abs(delta_h / math.tan(gamma_rad))
+
+
+def constant_q_profile_check(
+    M_start: float,
+    h_start: float,
+    M_end: float,
+    h_end: float,
+) -> dict[str, float]:
+    q_start = dynamic_pressure_from_mach_altitude(M_start, h_start)
+    q_end = dynamic_pressure_from_mach_altitude(M_end, h_end)
+
+    return {
+        "M_start": M_start,
+        "h_start": h_start,
+        "M_end": M_end,
+        "h_end": h_end,
+        "q_start": q_start,
+        "q_end": q_end,
+        "q_error": q_end - q_start,
+        "q_ratio": q_end / q_start if q_start > 0 else float("nan"),
+    }
+
+
+def altitude_for_mach_at_dynamic_pressure(
+    target_mach: float,
+    q_target: float,
+    h_low: float = 0.0,
+    h_high: float = 50_000.0,
+    tol: float = 1e-6,
+    max_iter: int = 100,
+) -> float:
+    if target_mach <= 0:
+        raise ValueError("target_mach must be positive.")
+    if q_target <= 0:
+        raise ValueError("q_target must be positive.")
+
+    q_low = dynamic_pressure_from_mach_altitude(target_mach, h_low)
+    q_high = dynamic_pressure_from_mach_altitude(target_mach, h_high)
+
+    if not (q_low >= q_target >= q_high):
+        raise ValueError(
+            f"q_target={q_target:.3f} Pa is not bracketed for M={target_mach:.3f}: "
+            f"q({h_low:.1f} m)={q_low:.3f}, q({h_high:.1f} m)={q_high:.3f}."
+        )
+
+    for _ in range(max_iter):
+        h_mid = 0.5 * (h_low + h_high)
+        q_mid = dynamic_pressure_from_mach_altitude(target_mach, h_mid)
+
+        if q_mid > q_target:
+            h_low = h_mid
+        else:
+            h_high = h_mid
+
+        if abs(h_high - h_low) < tol:
+            break
+
+    return 0.5 * (h_low + h_high)
+
+
+def compute_8_segment_profile(
+    gamma_climb_deg: float,
+    h0: float = 0.0,
+    h_step: float = 16_093.0,
+    h_cruise: float = 30_000.0,
+    M_takeoff_drag: float = 0.30,
+    M_accel_1: float = 0.70,
+    M_climb_1: float = 0.90,
+    M_accel_2: float = 1.70,
+    M_cruise: float = 5.0,
+    cruise_time: float = 90.0 * 60.0,
+    accel_for_distance: float = 0.15 * 9.81,
+    descent_accel: float = 0.15 * 9.81,
+    total_range: float = 9500e3,
+) -> dict[str, Any]:
+    """
+    8-segment mission profile geometry:
+
+    1. take-off
+    2. acceleration to M = 0.7
+    3. climb to h = 16.093 km and M = 0.9
+    4. acceleration to M = 1.7
+    5. climb along constant-q path to M = 5 at 30 km
+       This file splits segment 5 by propulsion mode:
+       5a. turbojet from M1.7 to M3
+       5b. ramjet from M3 to M5
+    6. cruise at M = 5 for 90 min at 30 km
+    7. unpowered descent
+    8. landing
+    """
+    V_takeoff_drag = mach_to_velocity(M_takeoff_drag, h0)
+    V_accel_1 = mach_to_velocity(M_accel_1, h0)
+    V_climb_1 = mach_to_velocity(M_climb_1, h_step)
+    V_accel_2 = mach_to_velocity(M_accel_2, h_step)
+    V_cruise = mach_to_velocity(M_cruise, h_cruise)
+
+    q_check = constant_q_profile_check(
+        M_start=M_accel_2,
+        h_start=h_step,
+        M_end=M_cruise,
+        h_end=h_cruise,
+    )
+
+    dx_accel_1 = acceleration_distance(
+        V_initial=V_takeoff_drag,
+        V_final=V_accel_1,
+        accel=accel_for_distance,
+    )
+
+    dx_climb_1 = climb_distance_from_gamma(
+        delta_h=h_step - h0,
+        gamma_deg=gamma_climb_deg,
+    )
+
+    dx_accel_2 = acceleration_distance(
+        V_initial=V_climb_1,
+        V_final=V_accel_2,
+        accel=accel_for_distance,
+    )
+
+    dx_const_q_climb = climb_distance_from_gamma(
+        delta_h=h_cruise - h_step,
+        gamma_deg=gamma_climb_deg,
+    )
+
+    cruise_range = cruise_time * V_cruise
+
+    cruise_start_x = (
+        dx_accel_1
+        + dx_climb_1
+        + dx_accel_2
+        + dx_const_q_climb
+    )
+
+    cruise_end_x = cruise_start_x + cruise_range
+
+    descent = analyse_descent(
+        end_cruise_x=cruise_end_x,
+        h_cruise=h_cruise,
+        v_cruise=V_cruise,
+        acc_tot=descent_accel,
+        total_range=total_range,
+    )
+
+    return {
+        "h0": h0,
+        "h_step": h_step,
+        "h_cruise": h_cruise,
+        "gamma_climb_deg": gamma_climb_deg,
+
+        "M_takeoff_drag": M_takeoff_drag,
+        "M_accel_1": M_accel_1,
+        "M_climb_1": M_climb_1,
+        "M_accel_2": M_accel_2,
+        "M_cruise": M_cruise,
+
+        "V_takeoff_drag": V_takeoff_drag,
+        "V_accel_1": V_accel_1,
+        "V_climb_1": V_climb_1,
+        "V_accel_2": V_accel_2,
+        "V_cruise": V_cruise,
+
+        "q_const_start": q_check["q_start"],
+        "q_const_end": q_check["q_end"],
+        "q_const_error": q_check["q_error"],
+        "q_const_ratio": q_check["q_ratio"],
+
+        "dx_accel_1": dx_accel_1,
+        "dx_climb_1": dx_climb_1,
+        "dx_accel_2": dx_accel_2,
+        "dx_const_q_climb": dx_const_q_climb,
+
+        "cruise_start_x": cruise_start_x,
+        "cruise_range": cruise_range,
+        "cruise_end_x": cruise_end_x,
+
+        **descent,
+    }
+
+
 def analyse_descent(
     end_cruise_x: float,
     h_cruise: float,
@@ -1036,221 +1337,170 @@ def find_feasible_descent_acceleration(
     }
 
 
-def find_ascent_state_at_mach(
-    target_mach: float,
-    h_cruise: float,
-    gamma_deg: float,
-    acc_tot: float,
-) -> dict[str, float | bool]:
-    gamma_rad = math.radians(gamma_deg)
-    acc_x = acc_tot * math.cos(gamma_rad)
-    acc_y = acc_tot * math.sin(gamma_rad)
-
-    if acc_y <= 0:
-        raise ValueError("acc_y must be positive.")
-
-    t_to_cruise = math.sqrt(2.0 * h_cruise / acc_y)
-
-    def mach_at_time(t: float) -> float:
-        h = 0.5 * acc_y * t**2
-        V = acc_tot * t
-        return V / speed_of_sound(h)
-
-    mach_at_cruise_height = mach_at_time(t_to_cruise)
-
-    if mach_at_cruise_height < target_mach:
-        t = t_to_cruise
-    else:
-        t_low = 0.0
-        t_high = t_to_cruise
-        for _ in range(100):
-            t_mid = 0.5 * (t_low + t_high)
-            if mach_at_time(t_mid) < target_mach:
-                t_low = t_mid
-            else:
-                t_high = t_mid
-        t = 0.5 * (t_low + t_high)
-
-    h = 0.5 * acc_y * t**2
-    V = acc_tot * t
-    Vx = acc_x * t
-    Vy = acc_y * t
-    x = 0.5 * acc_x * t**2
-
-    return {
-        "target_reached": mach_at_cruise_height >= target_mach,
-        "t": t,
-        "h": h,
-        "V": V,
-        "Vx": Vx,
-        "Vy": Vy,
-        "x": x,
-        "mach": V / speed_of_sound(h),
-    }
-
-
-def compute_flight_profile(
-    gamma_deg: float,
-    h_cruise: float,
-    acc_tot: float = 0.15 * 9.81,
-    M_cruise: float = 5.0,
-    cruise_time: float = 90.0 * 60.0,
-    total_range: float = 9500e3,
-) -> dict[str, float | bool]:
-    gamma_rad = math.radians(gamma_deg)
-
-    a_cruise = speed_of_sound(h_cruise)
-    V_cruise = M_cruise * a_cruise
-    cruise_range = cruise_time * V_cruise
-
-    acc_x = acc_tot * math.cos(gamma_rad)
-    acc_y = acc_tot * math.sin(gamma_rad)
-
-    if acc_y <= 0:
-        raise ValueError("gamma_deg must give positive vertical acceleration.")
-
-    dv_y_to_cruise = math.sqrt(2.0 * acc_y * h_cruise)
-    t_to_cruise = dv_y_to_cruise / acc_y
-    dv_x_to_cruise = acc_x * t_to_cruise
-
-    dx_to_cruise = dv_x_to_cruise**2 / (2.0 * acc_x)
-
-    if dv_x_to_cruise >= V_cruise:
-        raise ValueError(
-            "Horizontal speed at cruise altitude is already >= cruise speed. "
-            "No horizontal acceleration segment to Mach 5 is needed."
-        )
-
-    dx_hor_acc = (V_cruise**2 - dv_x_to_cruise**2) / (2.0 * acc_tot)
-
-    cruise_cond_start_x = dx_to_cruise + dx_hor_acc
-    cruise_cond_end_x = cruise_cond_start_x + cruise_range
-
-    descent = analyse_descent(
-        end_cruise_x=cruise_cond_end_x,
-        h_cruise=h_cruise,
-        v_cruise=V_cruise,
-        acc_tot=acc_tot,
-        total_range=total_range,
-    )
-
-    V_at_cruise_height = math.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
-    M_at_cruise_height = V_at_cruise_height / a_cruise
-    M_horizontal_start = dv_x_to_cruise / a_cruise
-
-    return {
-        "gamma_deg": gamma_deg,
-        "h_cruise": h_cruise,
-        "acc_tot": acc_tot,
-        "acc_x": acc_x,
-        "acc_y": acc_y,
-        "a_cruise": a_cruise,
-        "V_cruise": V_cruise,
-        "cruise_time": cruise_time,
-        "cruise_range": cruise_range,
-        "t_to_cruise": t_to_cruise,
-        "dv_y_to_cruise": dv_y_to_cruise,
-        "dv_x_to_cruise": dv_x_to_cruise,
-        "V_at_cruise_height": V_at_cruise_height,
-        "M_at_cruise_height": M_at_cruise_height,
-        "M_horizontal_start": M_horizontal_start,
-        "dx_to_cruise": dx_to_cruise,
-        "dx_horizontal_acceleration": dx_hor_acc,
-        "cruise_cond_start_x": cruise_cond_start_x,
-        "cruise_cond_end_x": cruise_cond_end_x,
-        **descent,
-    }
-
-
 # =============================================================================
 # Run
 # =============================================================================
 
 if __name__ == "__main__":
 
-    gamma_mission = 10.0
+    # -------------------------------------------------------------------------
+    # Mission definition
+    # -------------------------------------------------------------------------
+    gamma_mission = 7.0
+
     h0 = 0.0
-    h_cruise = 35_000.0
+    h_step = 10_000.0
+
     acc_tot = 0.15 * 9.81
 
-    M_turbo_to_ram = 2.5
+    M_takeoff_drag = 0.30
+    M_accel_1 = 0.70
+    M_climb_1 = 0.90
+    M_accel_2 = 1.70
+
+    M_turbo_to_ram = 3.00
     M_cruise = 5.0
+
+    q_const = dynamic_pressure_from_mach_altitude(M_accel_2, h_step)
+
+    h_cruise = altitude_for_mach_at_dynamic_pressure(
+        target_mach=M_cruise,
+        q_target=q_const,
+        h_low=h_step,
+        h_high=40_000.0,
+    )
+
     cruise_time = 90.0 * 60.0
     total_range = 9500e3
 
-    profile = compute_flight_profile(
-        gamma_deg=gamma_mission,
+    profile = compute_8_segment_profile(
+        gamma_climb_deg=gamma_mission,
+        h0=h0,
+        h_step=h_step,
         h_cruise=h_cruise,
-        acc_tot=acc_tot,
+        M_takeoff_drag=M_takeoff_drag,
+        M_accel_1=M_accel_1,
+        M_climb_1=M_climb_1,
+        M_accel_2=M_accel_2,
         M_cruise=M_cruise,
         cruise_time=cruise_time,
+        accel_for_distance=acc_tot,
+        descent_accel=acc_tot,
         total_range=total_range,
     )
 
-    a_cruise = profile["a_cruise"]
+    V_takeoff_drag = profile["V_takeoff_drag"]
+    V_accel_1 = profile["V_accel_1"]
+    V_climb_1 = profile["V_climb_1"]
+    V_accel_2 = profile["V_accel_2"]
     V_cruise = profile["V_cruise"]
-    dv_x_to_cruise = profile["dv_x_to_cruise"]
-    dv_y_to_cruise = profile["dv_y_to_cruise"]
-    V_at_cruise_height = profile["V_at_cruise_height"]
-    M_at_cruise_height = profile["M_at_cruise_height"]
-    M_horizontal_start = profile["M_horizontal_start"]
-    dx_to_cruise = profile["dx_to_cruise"]
-    dx_hor_acc = profile["dx_horizontal_acceleration"]
-    cruise_range = profile["cruise_range"]
 
-    switch_state = find_ascent_state_at_mach(
+    # Find the point on the constant-q path where Mach = 3.
+    q_const = dynamic_pressure_from_mach_altitude(M_accel_2, h_step)
+
+    h_turbo_to_ram = altitude_for_mach_at_dynamic_pressure(
         target_mach=M_turbo_to_ram,
-        h_cruise=h_cruise,
-        gamma_deg=gamma_mission,
-        acc_tot=acc_tot,
+        q_target=q_const,
+        h_low=h_step,
+        h_high=h_cruise,
     )
+
+    V_turbo_to_ram = mach_to_velocity(M_turbo_to_ram, h_turbo_to_ram)
 
     print("\nMission profile estimate")
     print("------------------------")
-    print(f"gamma:                      {gamma_mission:.2f} deg")
-    print(f"h_cruise:                   {h_cruise:.1f} m")
-    print(f"a_cruise:                   {a_cruise:.3f} m/s")
-    print(f"V_cruise:                   {V_cruise:.3f} m/s")
-    print(f"M_at_cruise_height:         {M_at_cruise_height:.3f}")
-    print(f"M_horizontal_start:         {M_horizontal_start:.3f}")
-    print(f"M2.5 reached during ascent: {switch_state['target_reached']}")
-    print(f"h_at_M2.5:                  {switch_state['h']:.3f} m")
-    print(f"V_at_M2.5:                  {switch_state['V']:.3f} m/s")
-    print(f"dx_to_cruise:               {dx_to_cruise / 1000:.3f} km")
-    print(f"dx_horizontal_acceleration: {dx_hor_acc / 1000:.3f} km")
-    print(f"cruise_range:               {cruise_range / 1000:.3f} km")
-    print(f"x_descent:                  {profile['x_descent'] / 1000:.3f} km")
-    print(f"final_total_range:          {profile['final_total_range'] / 1000:.3f} km")
-    print(f"descent_fits_9500km:        {profile['descent_fits_total_range']}")
+    print(f"gamma_climb:                 {gamma_mission:.2f} deg")
+    print(f"h_step:                      {h_step:.1f} m")
+    print(f"h_cruise:                    {h_cruise:.1f} m")
+    print(f"M_accel_1:                   {M_accel_1:.3f}")
+    print(f"M_climb_1:                   {M_climb_1:.3f}")
+    print(f"M_accel_2:                   {M_accel_2:.3f}")
+    print(f"M_turbo_to_ram:              {M_turbo_to_ram:.3f}")
+    print(f"h_at_M3_constant_q:          {h_turbo_to_ram:.3f} m")
+    print(f"V_at_M3_constant_q:          {V_turbo_to_ram:.3f} m/s")
+    print(f"M_cruise:                    {M_cruise:.3f}")
+    print(f"V_accel_1:                   {V_accel_1:.3f} m/s")
+    print(f"V_climb_1:                   {V_climb_1:.3f} m/s")
+    print(f"V_accel_2:                   {V_accel_2:.3f} m/s")
+    print(f"V_cruise:                    {V_cruise:.3f} m/s")
+    print(f"q_const_start M1.7/10km: {profile['q_const_start']:.3f} Pa")
+    print(f"q_const_end M5/h_cruise:         {profile['q_const_end']:.3f} Pa")
+    print(f"q_const_ratio:               {profile['q_const_ratio']:.6f}")
+    print(f"dx_accel_to_M0.7:            {profile['dx_accel_1'] / 1000:.3f} km")
+    print(f"dx_climb_to_16.093km:        {profile['dx_climb_1'] / 1000:.3f} km")
+    print(f"dx_accel_to_M1.7:            {profile['dx_accel_2'] / 1000:.3f} km")
+    print(f"dx_const_q_climb_to_M5:      {profile['dx_const_q_climb'] / 1000:.3f} km")
+    print(f"cruise_start_x:              {profile['cruise_start_x'] / 1000:.3f} km")
+    print(f"cruise_range:                {profile['cruise_range'] / 1000:.3f} km")
+    print(f"x_descent:                   {profile['x_descent'] / 1000:.3f} km")
+    print(f"final_total_range:           {profile['final_total_range'] / 1000:.3f} km")
+    print(f"descent_fits_9500km:         {profile['descent_fits_total_range']}")
 
+    # -------------------------------------------------------------------------
     # Propulsion thrust estimates from EngineSim polynomial curves
-    if switch_state["target_reached"]:
-        M_ramjet_avg = 0.5 * (M_turbo_to_ram + M_cruise)
-        h_ramjet_avg = 0.5 * (switch_state["h"] + h_cruise)
-    else:
-        M_ramjet_avg = 0.5 * (M_horizontal_start + M_cruise)
-        h_ramjet_avg = h_cruise
-
-    M_turbo_takeoff = 0.2
+    # -------------------------------------------------------------------------
+    M_turbo_takeoff = 0.20
     h_turbo_takeoff = h0
 
-    M_turbo_ascent = 1.25
-    h_turbo_ascent = 0.5 * switch_state["h"] if switch_state["target_reached"] else 0.5 * h_cruise
+    M_turbo_accel_1 = 0.5 * (M_takeoff_drag + M_accel_1)
+    h_turbo_accel_1 = h0
 
-    M_ramjet_ascent = M_ramjet_avg
-    h_ramjet_ascent = h_ramjet_avg
+    M_turbo_climb_1 = 0.5 * (M_accel_1 + M_climb_1)
+    h_turbo_climb_1 = 0.5 * (h0 + h_step)
 
-    M_ramjet_horizontal = 0.5 * (M_horizontal_start + M_cruise)
-    h_ramjet_horizontal = h_cruise
+    M_turbo_accel_2 = 0.5 * (M_climb_1 + M_accel_2)
+    h_turbo_accel_2 = h_step
+
+    M_turbo_const_q = 0.5 * (M_accel_2 + M_turbo_to_ram)
+    h_turbo_const_q = 0.5 * (h_step + h_turbo_to_ram)
+
+    M_ramjet_const_q = 0.5 * (M_turbo_to_ram + M_cruise)
+    h_ramjet_const_q = 0.5 * (h_turbo_to_ram + h_cruise)
 
     M_scramjet_cruise = M_cruise
     h_scramjet_cruise = h_cruise
 
-    T_takeoff, thrust_takeoff_info = thrust_from_mach_altitude("turbo", M_turbo_takeoff, h_turbo_takeoff)
-    T_turbojet_operating, thrust_turbo_info = thrust_from_mach_altitude("turbo", M_turbo_ascent, h_turbo_ascent)
-    T_ramjet_ascent, thrust_ram_ascent_info = thrust_from_mach_altitude("ram", M_ramjet_ascent, h_ramjet_ascent)
-    T_ramjet_horizontal, thrust_ram_horizontal_info = thrust_from_mach_altitude("ram", M_ramjet_horizontal, h_ramjet_horizontal)
-    T_scramjet_cruise, thrust_scram_info = thrust_from_mach_altitude("scram", M_scramjet_cruise, h_scramjet_cruise)
+    T_takeoff, thrust_takeoff_info = thrust_from_mach_altitude(
+        "turbo",
+        M_turbo_takeoff,
+        h_turbo_takeoff,
+    )
+
+    T_turbo_accel_1, thrust_turbo_accel_1_info = thrust_from_mach_altitude(
+        "turbo",
+        M_turbo_accel_1,
+        h_turbo_accel_1,
+    )
+
+    T_turbo_climb_1, thrust_turbo_climb_1_info = thrust_from_mach_altitude(
+        "turbo",
+        M_turbo_climb_1,
+        h_turbo_climb_1,
+    )
+
+    T_turbo_accel_2, thrust_turbo_accel_2_info = thrust_from_mach_altitude(
+        "turbo",
+        M_turbo_accel_2,
+        h_turbo_accel_2,
+    )
+
+    T_turbo_const_q, thrust_turbo_const_q_info = thrust_from_mach_altitude(
+        "turbo",
+        M_turbo_const_q,
+        h_turbo_const_q,
+    )
+
+    T_ramjet_const_q, thrust_ramjet_const_q_info = thrust_from_mach_altitude(
+        "ram",
+        M_ramjet_const_q,
+        h_ramjet_const_q,
+    )
+
+    T_scramjet_cruise, thrust_scram_info = thrust_from_mach_altitude(
+        "scram",
+        M_scramjet_cruise,
+        h_scramjet_cruise,
+    )
 
     Isp_turbojet = 2100.0
     Isp_ramjet = 3500.0
@@ -1259,112 +1509,116 @@ if __name__ == "__main__":
     print("\nEngineSim thrust-curve estimates")
     print("--------------------------------")
     print(f"Turbo takeoff:       M={M_turbo_takeoff:.3f}, h={h_turbo_takeoff:.1f} m, T={T_takeoff:.3f} N")
-    print(f"Turbo ascent:        M={M_turbo_ascent:.3f}, h={h_turbo_ascent:.1f} m, T={T_turbojet_operating:.3f} N")
-    print(f"Ramjet ascent:       M={M_ramjet_ascent:.3f}, h={h_ramjet_ascent:.1f} m, T={T_ramjet_ascent:.3f} N")
-    print(f"Ramjet horizontal:   M={M_ramjet_horizontal:.3f}, h={h_ramjet_horizontal:.1f} m, T={T_ramjet_horizontal:.3f} N")
+    print(f"Turbo accel M0.7:    M={M_turbo_accel_1:.3f}, h={h_turbo_accel_1:.1f} m, T={T_turbo_accel_1:.3f} N")
+    print(f"Turbo climb M0.9:    M={M_turbo_climb_1:.3f}, h={h_turbo_climb_1:.1f} m, T={T_turbo_climb_1:.3f} N")
+    print(f"Turbo accel M1.7:    M={M_turbo_accel_2:.3f}, h={h_turbo_accel_2:.1f} m, T={T_turbo_accel_2:.3f} N")
+    print(f"Turbo const-q to M3: M={M_turbo_const_q:.3f}, h={h_turbo_const_q:.1f} m, T={T_turbo_const_q:.3f} N")
+    print(f"Ramjet const-q M5:   M={M_ramjet_const_q:.3f}, h={h_ramjet_const_q:.1f} m, T={T_ramjet_const_q:.3f} N")
     print(f"Scramjet cruise:     M={M_scramjet_cruise:.3f}, h={h_scramjet_cruise:.1f} m, T={T_scramjet_cruise:.3f} N")
 
+    # -------------------------------------------------------------------------
+    # Mission segments
+    # -------------------------------------------------------------------------
     segments = [
         MissionSegment(
-            name="1_takeoff",
+            name="1_takeoff_turbojet",
             mode="fixed",
             fuel_type="JetA",
             propulsion_mode="turbojet",
             fixed_fraction=0.990,
-            mach_drag=0.30,
+            mach_drag=M_takeoff_drag,
             altitude_drag=h0,
             flight_path_angle_deg=5.0,
             T=T_takeoff,
         ),
-    ]
 
-    if switch_state["target_reached"]:
-        segments.append(
-            MissionSegment(
-                name="2a_ascent_to_M2.5_turbojet",
-                mode="T_gt_D",
-                fuel_type="JetA",
-                propulsion_mode="turbojet",
-                delta_h=switch_state["h"],
-                V_initial=0.0,
-                V_final=switch_state["V"],
-                V_average=0.5 * switch_state["V"],
-                I_sp=Isp_turbojet,
-                mach_drag=1.25,
-                altitude_drag=h_turbo_ascent,
-                flight_path_angle_deg=gamma_mission,
-                T=T_turbojet_operating,
-                max_total_accel_g=0.20,
-            )
-        )
-
-        segments.append(
-            MissionSegment(
-                name="2b_ascent_M2.5_to_35km_ramjet",
-                mode="T_gt_D",
-                fuel_type="LH2",
-                propulsion_mode="ramjet",
-                delta_h=h_cruise - switch_state["h"],
-                V_initial=switch_state["V"],
-                V_final=V_at_cruise_height,
-                V_average=0.5 * (switch_state["V"] + V_at_cruise_height),
-                I_sp=Isp_ramjet,
-                mach_drag=0.5 * (M_turbo_to_ram + M_at_cruise_height),
-                altitude_drag=h_ramjet_ascent,
-                flight_path_angle_deg=gamma_mission,
-                T=T_ramjet_ascent,
-                max_total_accel_g=0.20,
-            )
-        )
-    else:
-        segments.append(
-            MissionSegment(
-                name="2_ascent_to_35km_turbojet",
-                mode="T_gt_D",
-                fuel_type="JetA",
-                propulsion_mode="turbojet",
-                delta_h=h_cruise,
-                V_initial=0.0,
-                V_final=V_at_cruise_height,
-                V_average=0.5 * V_at_cruise_height,
-                I_sp=Isp_turbojet,
-                mach_drag=0.5 * M_at_cruise_height,
-                altitude_drag=0.5 * h_cruise,
-                flight_path_angle_deg=gamma_mission,
-                T=T_turbojet_operating,
-                max_total_accel_g=0.20,
-            )
-        )
-
-    V_horizontal_accel_start = dv_x_to_cruise
-    if V_horizontal_accel_start >= V_cruise:
-        raise ValueError(
-            "Horizontal speed at cruise altitude is already >= cruise speed. "
-            "No horizontal acceleration segment to Mach 5 is needed."
-        )
-
-    segments.append(
         MissionSegment(
-            name="3_horizontal_accel_to_M5_ramjet",
+            name="2_accel_to_M0.7_turbojet",
+            mode="T_gt_D",
+            fuel_type="JetA",
+            propulsion_mode="turbojet",
+            delta_h=0.0,
+            V_initial=V_takeoff_drag,
+            V_final=V_accel_1,
+            V_average=0.5 * (V_takeoff_drag + V_accel_1),
+            I_sp=Isp_turbojet,
+            mach_drag=M_turbo_accel_1,
+            altitude_drag=h_turbo_accel_1,
+            flight_path_angle_deg=0.0,
+            T=T_turbo_accel_1,
+            max_total_accel_g=0.30,
+        ),
+
+        MissionSegment(
+            name="3_climb_to_10km_M0.9_turbojet",
+            mode="T_gt_D",
+            fuel_type="JetA",
+            propulsion_mode="turbojet",
+            delta_h=h_step - h0,
+            V_initial=V_accel_1,
+            V_final=V_climb_1,
+            V_average=0.5 * (V_accel_1 + V_climb_1),
+            I_sp=Isp_turbojet,
+            mach_drag=M_turbo_climb_1,
+            altitude_drag=h_turbo_climb_1,
+            flight_path_angle_deg=gamma_mission,
+            T=T_turbo_climb_1,
+            max_total_accel_g=0.30,
+        ),
+
+        MissionSegment(
+            name="4_accel_to_M1.7_turbojet",
+            mode="T_gt_D",
+            fuel_type="JetA",
+            propulsion_mode="turbojet",
+            delta_h=0.0,
+            V_initial=V_climb_1,
+            V_final=V_accel_2,
+            V_average=0.5 * (V_climb_1 + V_accel_2),
+            I_sp=Isp_turbojet,
+            mach_drag=M_turbo_accel_2,
+            altitude_drag=h_turbo_accel_2,
+            flight_path_angle_deg=0.0,
+            T=T_turbo_accel_2,
+            max_total_accel_g=0.30,
+        ),
+
+        MissionSegment(
+            name="5a_const_q_climb_M1.7_to_M3_turbojet",
+            mode="T_gt_D",
+            fuel_type="JetA",
+            propulsion_mode="turbojet",
+            delta_h=h_turbo_to_ram - h_step,
+            V_initial=V_accel_2,
+            V_final=V_turbo_to_ram,
+            V_average=0.5 * (V_accel_2 + V_turbo_to_ram),
+            I_sp=Isp_turbojet,
+            mach_drag=M_turbo_const_q,
+            altitude_drag=h_turbo_const_q,
+            flight_path_angle_deg=gamma_mission,
+            T=T_turbo_const_q,
+            max_total_accel_g=0.30,
+        ),
+
+        MissionSegment(
+            name="5b_const_q_climb_M3_to_M5_ramjet",
             mode="T_gt_D",
             fuel_type="LH2",
             propulsion_mode="ramjet",
-            delta_h=0.0,
-            V_initial=V_horizontal_accel_start,
+            delta_h=h_cruise - h_turbo_to_ram,
+            V_initial=V_turbo_to_ram,
             V_final=V_cruise,
-            V_average=0.5 * (V_horizontal_accel_start + V_cruise),
+            V_average=0.5 * (V_turbo_to_ram + V_cruise),
             I_sp=Isp_ramjet,
-            mach_drag=M_ramjet_horizontal,
-            altitude_drag=h_ramjet_horizontal,
-            flight_path_angle_deg=0.0,
-            T=T_ramjet_horizontal,
-            max_total_accel_g=0.20,
-        )
-    )
+            mach_drag=M_ramjet_const_q,
+            altitude_drag=h_ramjet_const_q,
+            flight_path_angle_deg=gamma_mission,
+            T=T_ramjet_const_q,
+            max_total_accel_g=0.30,
+        ),
 
-    segments.append(
         MissionSegment(
-            name="4_cruise_M5_35km_scramjet",
+            name="6_cruise_M5_const_q_altitude_scramjet",
             mode="T_eq_D",
             fuel_type="LH2",
             propulsion_mode="scramjet",
@@ -1374,34 +1628,31 @@ if __name__ == "__main__":
             flight_path_angle_deg=0.0,
             T=T_scramjet_cruise,
             delta_t=cruise_time,
-        )
-    )
+        ),
 
-    segments.extend(
-        [
-            MissionSegment(
-                name="5_unpowered_descent",
-                mode="fixed",
-                fuel_type="none",
-                propulsion_mode="none",
-                fixed_fraction=1.0,
-                mach_drag=2.0,
-                altitude_drag=0.5 * h_cruise,
-                flight_path_angle_deg=-5.0,
-            ),
-            MissionSegment(
-                name="6_landing",
-                mode="fixed",
-                fuel_type="JetA",
-                propulsion_mode="turbojet",
-                fixed_fraction=0.997,
-                mach_drag=0.25,
-                altitude_drag=h0,
-                flight_path_angle_deg=-3.0,
-                T=T_takeoff,
-            ),
-        ]
-    )
+        MissionSegment(
+            name="7_unpowered_descent",
+            mode="fixed",
+            fuel_type="none",
+            propulsion_mode="none",
+            fixed_fraction=1.0,
+            mach_drag=2.0,
+            altitude_drag=0.5 * h_cruise,
+            flight_path_angle_deg=-5.0,
+        ),
+
+        MissionSegment(
+            name="8_landing_turbojet",
+            mode="fixed",
+            fuel_type="JetA",
+            propulsion_mode="turbojet",
+            fixed_fraction=0.997,
+            mach_drag=0.25,
+            altitude_drag=h0,
+            flight_path_angle_deg=-3.0,
+            T=T_takeoff,
+        ),
+    ]
 
     S_plan, W_to, result = converge_S_plan_and_TOGW(
         tau=0.14,
@@ -1483,17 +1734,19 @@ if __name__ == "__main__":
             f"T_used={T_used:>12.3f} N   "
             f"T_avail={T_available:>12.3f} N   "
             f"T/D={T_used / D_used if D_used > 0 else 0.0:>8.3f}   "
-            f"alpha={aero.get('alpha_deg', 0.0):>5.2f} deg   "
-            f"CL_sched={aero.get('C_L_calc', 0.0):>8.4f}   "
+            f"CL_used={aero.get('C_L_used', 0.0):>8.4f}   "
             f"CL_req={aero.get('C_L_force_balance', 0.0):>8.4f}   "
-            f"CL_ratio={aero.get('lift_balance_ratio', 0.0):>6.3f}   "
+            f"CL_sched={aero.get('C_L_scheduled', 0.0):>8.4f}   "
+            f"CL_sched/req={aero.get('lift_balance_ratio', 0.0):>6.3f}   "
+            f"alpha_req={aero.get('alpha_required_deg', 0.0):>7.2f} deg   "
             f"CD={aero.get('C_D_calc', 0.0):>8.5f}   "
             f"L/D={aero.get('L_over_D_calc', 0.0):>8.3f}   "
             f"q={aero.get('q', 0.0):>10.1f} Pa   "
             f"M={segment.mach_drag:>5.2f}   "
             f"polar_M={aero.get('mach_used_for_polar', segment.mach_drag):>5.2f}   "
+            f"polar_status={aero.get('mach_polar_status', 'unknown'):>17s}   "
             f"regime={aero.get('mach_regime', 'unknown'):>10s}   "
-            f"h={segment.altitude_drag:>8.1f} m"
+            f"h={segment.altitude_drag:>8.1f} m   "
             f"a_x={aero.get('axial_accel_g', 0.0):>6.3f} g   "
             f"a_y={aero.get('vertical_accel_g', 0.0):>6.3f} g   "
             f"a_tot={aero.get('total_accel_g', 0.0):>6.3f} g   "
