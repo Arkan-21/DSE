@@ -5,9 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="edf6c3f2-5c08-4bcc-aa9c-2f89b69d8fff" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/Radii_alt_graphing.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Heat_temps_turbulent.py" beforeDir="false" afterPath="$PROJECT_DIR$/Heat_temps_turbulent.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/figures/adiabatic_temperature.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/figures/adiabatic_temperature.pdf" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/figures/heat_flux.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/figures/heat_flux.pdf" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/figures/reynolds.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/figures/reynolds.pdf" afterDir="false" />
@@ -69,7 +67,7 @@
     "git-widget-placeholder": "main"
   }
 }]]></component>
-  <component name="RunManager" selected="Python.Radii_alt_graphing">
+  <component name="RunManager" selected="Python.Heat_temps_turbulent">
     <configuration name="Heat_temps_turbulent" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="DSE" />
       <option name="ENV_FILES" value="" />
@@ -213,8 +211,8 @@
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.Radii_alt_graphing" />
         <item itemvalue="Python.Heat_temps_turbulent" />
+        <item itemvalue="Python.Radii_alt_graphing" />
         <item itemvalue="Python.Mission_Heat_flux_Laminar" />
         <item itemvalue="Python.Mission_Heat_flux_Laminar" />
         <item itemvalue="Python.Missiondensitiesv" />
