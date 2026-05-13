@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
+from scipy.optimize import minimize
 
 
 # =============================================================================
@@ -107,7 +108,7 @@ def dynamic_pressure_from_mach_altitude(mach: float, altitude_m: float) -> float
 # =============================================================================
 # PCHIP drag polar interpolation
 # =============================================================================
-# Your drag polar has the form:
+# Drag polar:
 #     C_D = a(M) C_L^2 + b(M) C_L + c(M)
 # The a, b, c coefficients are interpolated with Mach number.
 # =============================================================================
@@ -132,6 +133,119 @@ def mach_regime(M: float) -> str:
         return "supersonic"
     else:
         return "hypersonic"
+
+
+# =============================================================================
+# PCHIP C_L-alpha interpolation
+# =============================================================================
+# C_L = m(M) * alpha_deg + k(M)
+# Alpha is in degrees.
+# =============================================================================
+
+MACH_CL_ALPHA_DATA = np.array([0.65, 0.9, 1.1, 1.3, 2.0, 5.37, 7.38, 10.61])
+
+CL_ALPHA_SLOPE_DATA = np.array([
+    0.0430,
+    0.0457,
+    0.0428,
+    0.0372,
+    0.0271,
+    0.0167,
+    0.0128,
+    0.0110,
+])
+
+CL_ALPHA_INTERCEPT_DATA = np.array([
+    -0.0347,
+    -0.0381,
+    -0.0235,
+    -0.0084,
+    0.0011,
+    -0.0032,
+    -0.0030,
+    -0.0048,
+])
+
+CL_ALPHA_SLOPE_INTERP = PchipInterpolator(MACH_CL_ALPHA_DATA, CL_ALPHA_SLOPE_DATA)
+CL_ALPHA_INTERCEPT_INTERP = PchipInterpolator(MACH_CL_ALPHA_DATA, CL_ALPHA_INTERCEPT_DATA)
+
+
+def cl_from_mach_alpha(
+    M: float,
+    alpha_deg: float,
+    clamp_mach: bool = True,
+) -> tuple[float, dict[str, float | str]]:
+    """
+    Calculate C_L from interpolated Mach-dependent lift curve:
+
+        C_L = m(M) * alpha_deg + k(M)
+
+    alpha_deg is angle of attack in degrees.
+    """
+    M_original = float(M)
+
+    if clamp_mach:
+        M_used = float(np.clip(M_original, MACH_CL_ALPHA_DATA.min(), MACH_CL_ALPHA_DATA.max()))
+    else:
+        if M_original < MACH_CL_ALPHA_DATA.min() or M_original > MACH_CL_ALPHA_DATA.max():
+            raise ValueError(
+                f"Mach number {M_original:.3f} outside available C_L-alpha range "
+                f"{MACH_CL_ALPHA_DATA.min():.2f} <= M <= {MACH_CL_ALPHA_DATA.max():.2f}"
+            )
+        M_used = M_original
+
+    slope = float(CL_ALPHA_SLOPE_INTERP(M_used))
+    intercept = float(CL_ALPHA_INTERCEPT_INTERP(M_used))
+    CL = slope * alpha_deg + intercept
+
+    return CL, {
+        "alpha_deg": alpha_deg,
+        "cl_alpha_slope_per_deg": slope,
+        "cl_alpha_intercept": intercept,
+        "mach_original_cl_alpha": M_original,
+        "mach_used_for_cl_alpha": M_used,
+        "mach_regime_cl_alpha": mach_regime(M_original),
+    }
+
+
+def alpha_from_mach_cl(
+    M: float,
+    CL_target: float,
+    clamp_mach: bool = True,
+) -> tuple[float, dict[str, float | str]]:
+    """
+    Calculate alpha required for a target C_L:
+
+        alpha_deg = (C_L - k(M)) / m(M)
+    """
+    M_original = float(M)
+
+    if clamp_mach:
+        M_used = float(np.clip(M_original, MACH_CL_ALPHA_DATA.min(), MACH_CL_ALPHA_DATA.max()))
+    else:
+        if M_original < MACH_CL_ALPHA_DATA.min() or M_original > MACH_CL_ALPHA_DATA.max():
+            raise ValueError(
+                f"Mach number {M_original:.3f} outside available C_L-alpha range "
+                f"{MACH_CL_ALPHA_DATA.min():.2f} <= M <= {MACH_CL_ALPHA_DATA.max():.2f}"
+            )
+        M_used = M_original
+
+    slope = float(CL_ALPHA_SLOPE_INTERP(M_used))
+    intercept = float(CL_ALPHA_INTERCEPT_INTERP(M_used))
+
+    if abs(slope) < 1e-12:
+        raise ValueError("Interpolated C_L-alpha slope is too close to zero.")
+
+    alpha_deg = (CL_target - intercept) / slope
+
+    return alpha_deg, {
+        "CL_target": CL_target,
+        "cl_alpha_slope_per_deg": slope,
+        "cl_alpha_intercept": intercept,
+        "mach_original_cl_alpha": M_original,
+        "mach_used_for_cl_alpha": M_used,
+        "mach_regime_cl_alpha": mach_regime(M_original),
+    }
 
 
 def cd_from_mach_cl(M: float, CL: float, clamp_mach: bool = True) -> tuple[float, dict[str, float | str]]:
@@ -280,8 +394,8 @@ class MissionSegment:
 
     mode:
         "fixed"  -> directly uses fixed_fraction
-        "T_gt_D" -> uses exp[-Δ(h + V²/2g) / (Isp V (1 - D/T))]
-        "T_eq_D" -> uses exp[-D Δt / (Isp W)]
+        "T_gt_D" -> uses exp[-Delta(h + V^2/2g) / (Isp V (1 - D/T))]
+        "T_eq_D" -> uses exp[-D Delta_t / (Isp W)]
 
     Drag calculation:
         L_required = W g cos(gamma) + W g n_normal_extra
@@ -324,9 +438,91 @@ def segment_lift_required(segment: MissionSegment, W_current: float) -> float:
     return W_current_force * (math.cos(gamma_rad) + segment.n_normal_extra)
 
 
+def scheduled_alpha_for_segment(segment: MissionSegment) -> float:
+    """
+    Representative angle-of-attack schedule for a passenger hypersonic vehicle.
+
+    Alpha is in degrees and is converted to C_L using the interpolated C_L-alpha
+    curves. These values are deliberately modest for high Mach flight.
+
+    Interpretation:
+        - takeoff/landing: high alpha, but still below an aggressive stall-like value
+        - transonic climb: moderate alpha
+        - supersonic ascent: gradually reduced alpha
+        - hypersonic acceleration/cruise: low alpha to keep wave/induced drag sane
+    """
+    name = segment.name.lower()
+    M = segment.mach_drag
+
+    if "takeoff" in name:
+        return 8.5
+
+    if "landing" in name:
+        return 10.5
+
+    if "descent" in name:
+        if M >= 5.0:
+            return 2.0
+        if M >= 2.0:
+            return 2.5
+        return 4.0
+
+    if "cruise" in name:
+        if M >= 5.0:
+            return 3.5
+        return 3.0
+
+    if "horizontal_accel" in name:
+        if M >= 5.0:
+            return 3.0
+        if M >= 2.0:
+            return 3.5
+        return 4.0
+
+    if "ascent" in name:
+        if M < 0.8:
+            return 7.5
+        if M < 1.2:
+            return 6.0
+        if M < 2.5:
+            return 4.5
+        if M < 4.0:
+            return 4.0
+        return 3.2
+
+    # General fallback by Mach regime.
+    if M < 0.8:
+        return 7.0
+    if M < 1.2:
+        return 5.5
+    if M < 2.5:
+        return 4.5
+    if M < 5.0:
+        return 3.5
+    return 3.0
+
+
+def scheduled_cl_for_segment(segment: MissionSegment) -> tuple[float, dict[str, float | str]]:
+    """
+    Calculate scheduled C_L using scheduled alpha and the interpolated C_L-alpha curves.
+    """
+    alpha_deg = scheduled_alpha_for_segment(segment)
+    return cl_from_mach_alpha(segment.mach_drag, alpha_deg, clamp_mach=True)
+
+
 def segment_aero_from_polar(segment: MissionSegment, W_current: float, S_plan: float) -> dict[str, Any]:
     """
     Calculate drag using the interpolated C_D-C_L polar.
+
+    Two C_L values are tracked:
+        C_L_force_balance: physically required steady-flight C_L from L = W cos(gamma)
+        C_L_calc: scheduled C_L used for drag-polar evaluation
+
+    If C_L_calc is far below C_L_force_balance, the segment is not physically
+    force-balanced. That means the trajectory model needs vertical thrust,
+    a different flight-path/acceleration model, more planform area, or a lower
+    mass. However, using scheduled C_L prevents the sizing loop from being
+    dominated by an artificial induced-drag explosion.
     """
     if S_plan <= 0:
         raise ValueError("S_plan must be positive.")
@@ -342,7 +538,9 @@ def segment_aero_from_polar(segment: MissionSegment, W_current: float, S_plan: f
         raise ValueError(f"Segment '{segment.name}' dynamic pressure is non-positive.")
 
     L_required = segment_lift_required(segment, W_current)
-    C_L_calc = L_required / (q * S_plan)
+    C_L_force_balance = L_required / (q * S_plan)
+
+    C_L_calc, cl_alpha_info = scheduled_cl_for_segment(segment)
 
     C_D_calc, polar_info = cd_from_mach_cl(
         M=segment.mach_drag,
@@ -352,13 +550,19 @@ def segment_aero_from_polar(segment: MissionSegment, W_current: float, S_plan: f
 
     D_calc = q * S_plan * C_D_calc
 
+    lift_balance_ratio = C_L_calc / C_L_force_balance if C_L_force_balance > 0 else 0.0
+
     return {
         "D": D_calc,
         "L_required": L_required,
         "q": q,
         "C_L_calc": C_L_calc,
+        "C_L_force_balance": C_L_force_balance,
         "C_D_calc": C_D_calc,
         "L_over_D_calc": C_L_calc / C_D_calc if C_D_calc > 0 else 0.0,
+        "lift_balance_ratio": lift_balance_ratio,
+        "force_balance_warning": lift_balance_ratio < 0.75,
+        **cl_alpha_info,
         **polar_info,
     }
 
@@ -812,8 +1016,97 @@ def converge_S_plan_and_TOGW(
 
 
 # =============================================================================
-# Mission profile helper
+# Updated mission profile helper
 # =============================================================================
+
+def analyse_descent(
+    end_cruise_x: float,
+    h_cruise: float,
+    v_cruise: float,
+    acc_tot: float = 0.15 * 9.81,
+    total_range: float = 9500e3,
+) -> dict[str, float | bool]:
+    """
+    Analyse descent from cruise to ground.
+
+    If descent cannot fit inside total_range with acceleration magnitude <= acc_tot,
+    the shortest feasible descent range is computed instead.
+    """
+    remaining_range = total_range - end_cruise_x
+
+    if remaining_range <= 0:
+        feasible = find_feasible_descent_acceleration(h_cruise, v_cruise, acc_tot)
+        return {
+            **feasible,
+            "descent_fits_total_range": False,
+            "final_total_range": end_cruise_x + feasible["x_descent"],
+        }
+
+    a_x = -v_cruise**2 / (2.0 * remaining_range)
+    t_descent = v_cruise / (-a_x)
+    a_y_mag = 2.0 * h_cruise / t_descent**2
+    a_descent = math.sqrt(a_x**2 + a_y_mag**2)
+
+    if a_descent > acc_tot:
+        feasible = find_feasible_descent_acceleration(h_cruise, v_cruise, acc_tot)
+        return {
+            **feasible,
+            "descent_fits_total_range": False,
+            "final_total_range": end_cruise_x + feasible["x_descent"],
+        }
+
+    return {
+        "a_x_descent": a_x,
+        "a_y_descent": -a_y_mag,
+        "a_descent": a_descent,
+        "t_descent": t_descent,
+        "x_descent": remaining_range,
+        "descent_fits_total_range": True,
+        "final_total_range": total_range,
+    }
+
+
+def find_feasible_descent_acceleration(
+    h_cruise: float,
+    v_cruise: float,
+    acc_tot: float = 0.15 * 9.81,
+) -> dict[str, float]:
+    """
+    Find minimum descent range while respecting total acceleration magnitude.
+    """
+    def descent_range_from_ax(a_x: float) -> float:
+        return v_cruise**2 / (2.0 * -a_x)
+
+    def accel_margin(x: np.ndarray) -> float:
+        a_x = x[0]
+        t_descent = v_cruise / (-a_x)
+        a_y_mag = 2.0 * h_cruise / t_descent**2
+        return acc_tot**2 - (a_x**2 + a_y_mag**2)
+
+    result = minimize(
+        fun=lambda x: descent_range_from_ax(x[0]),
+        x0=np.array([-0.5 * acc_tot]),
+        method="SLSQP",
+        bounds=[(-acc_tot, -1e-6)],
+        constraints=[{"type": "ineq", "fun": accel_margin}],
+    )
+
+    if not result.success:
+        raise RuntimeError(f"Descent optimisation failed: {result.message}")
+
+    a_x = float(result.x[0])
+    t_descent = v_cruise / (-a_x)
+    a_y_mag = 2.0 * h_cruise / t_descent**2
+    x_descent = descent_range_from_ax(a_x)
+
+    return {
+        "a_x_descent": a_x,
+        "a_y_descent": -a_y_mag,
+        "a_descent": math.sqrt(a_x**2 + a_y_mag**2),
+        "t_descent": t_descent,
+        "x_descent": x_descent,
+    }
+
 
 def find_ascent_state_at_mach(
     target_mach: float,
@@ -842,28 +1135,20 @@ def find_ascent_state_at_mach(
     mach_at_cruise_height = mach_at_time(t_to_cruise)
 
     if mach_at_cruise_height < target_mach:
-        return {
-            "target_reached": False,
-            "t": t_to_cruise,
-            "h": h_cruise,
-            "V": acc_tot * t_to_cruise,
-            "Vx": acc_x * t_to_cruise,
-            "Vy": acc_y * t_to_cruise,
-            "x": 0.5 * acc_x * t_to_cruise**2,
-            "mach": mach_at_cruise_height,
-        }
+        t = t_to_cruise
+    else:
+        t_low = 0.0
+        t_high = t_to_cruise
 
-    t_low = 0.0
-    t_high = t_to_cruise
+        for _ in range(100):
+            t_mid = 0.5 * (t_low + t_high)
+            if mach_at_time(t_mid) < target_mach:
+                t_low = t_mid
+            else:
+                t_high = t_mid
 
-    for _ in range(100):
-        t_mid = 0.5 * (t_low + t_high)
-        if mach_at_time(t_mid) < target_mach:
-            t_low = t_mid
-        else:
-            t_high = t_mid
+        t = 0.5 * (t_low + t_high)
 
-    t = 0.5 * (t_low + t_high)
     h = 0.5 * acc_y * t**2
     V = acc_tot * t
     Vx = acc_x * t
@@ -871,7 +1156,7 @@ def find_ascent_state_at_mach(
     x = 0.5 * acc_x * t**2
 
     return {
-        "target_reached": True,
+        "target_reached": mach_at_cruise_height >= target_mach,
         "t": t,
         "h": h,
         "V": V,
@@ -879,6 +1164,88 @@ def find_ascent_state_at_mach(
         "Vy": Vy,
         "x": x,
         "mach": V / speed_of_sound(h),
+    }
+
+
+def compute_flight_profile(
+    gamma_deg: float,
+    h_cruise: float,
+    acc_tot: float = 0.15 * 9.81,
+    M_cruise: float = 5.0,
+    cruise_time: float = 90.0 * 60.0,
+    total_range: float = 9500e3,
+) -> dict[str, float | bool]:
+    """
+    Updated mission profile based on the supplied profile script.
+
+    Phases:
+        1. Constant-gamma ascent to cruise altitude.
+        2. Horizontal acceleration at cruise altitude to M_cruise.
+        3. Constant-M cruise for cruise_time.
+        4. Descent feasibility check.
+    """
+    gamma_rad = math.radians(gamma_deg)
+
+    a_cruise = speed_of_sound(h_cruise)
+    V_cruise = M_cruise * a_cruise
+    cruise_range = cruise_time * V_cruise
+
+    acc_x = acc_tot * math.cos(gamma_rad)
+    acc_y = acc_tot * math.sin(gamma_rad)
+
+    if acc_y <= 0:
+        raise ValueError("gamma_deg must give positive vertical acceleration.")
+
+    dv_y_to_cruise = math.sqrt(2.0 * acc_y * h_cruise)
+    t_to_cruise = dv_y_to_cruise / acc_y
+    dv_x_to_cruise = acc_x * t_to_cruise
+
+    dx_to_cruise = dv_x_to_cruise**2 / (2.0 * acc_x)
+
+    if dv_x_to_cruise >= V_cruise:
+        raise ValueError(
+            "Horizontal speed at cruise altitude is already >= cruise speed. "
+            "No horizontal acceleration segment to Mach 5 is needed."
+        )
+
+    dx_hor_acc = (V_cruise**2 - dv_x_to_cruise**2) / (2.0 * acc_tot)
+
+    cruise_cond_start_x = dx_to_cruise + dx_hor_acc
+    cruise_cond_end_x = cruise_cond_start_x + cruise_range
+
+    descent = analyse_descent(
+        end_cruise_x=cruise_cond_end_x,
+        h_cruise=h_cruise,
+        v_cruise=V_cruise,
+        acc_tot=acc_tot,
+        total_range=total_range,
+    )
+
+    V_at_cruise_height = math.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
+    M_at_cruise_height = V_at_cruise_height / a_cruise
+    M_horizontal_start = dv_x_to_cruise / a_cruise
+
+    return {
+        "gamma_deg": gamma_deg,
+        "h_cruise": h_cruise,
+        "acc_tot": acc_tot,
+        "acc_x": acc_x,
+        "acc_y": acc_y,
+        "a_cruise": a_cruise,
+        "V_cruise": V_cruise,
+        "cruise_time": cruise_time,
+        "cruise_range": cruise_range,
+        "t_to_cruise": t_to_cruise,
+        "dv_y_to_cruise": dv_y_to_cruise,
+        "dv_x_to_cruise": dv_x_to_cruise,
+        "V_at_cruise_height": V_at_cruise_height,
+        "M_at_cruise_height": M_at_cruise_height,
+        "M_horizontal_start": M_horizontal_start,
+        "dx_to_cruise": dx_to_cruise,
+        "dx_horizontal_acceleration": dx_hor_acc,
+        "cruise_cond_start_x": cruise_cond_start_x,
+        "cruise_cond_end_x": cruise_cond_end_x,
+        **descent,
     }
 
 
@@ -950,29 +1317,33 @@ if __name__ == "__main__":
     M_turbo_to_ram = 2.5
     M_cruise = 5.0
     cruise_time = 90.0 * 60.0
+    total_range = 9500e3
 
-    gamma_rad = math.radians(gamma_mission)
-    acc_x = acc_tot * math.cos(gamma_rad)
-    acc_y = acc_tot * math.sin(gamma_rad)
+    profile = compute_flight_profile(
+        gamma_deg=gamma_mission,
+        h_cruise=h_cruise,
+        acc_tot=acc_tot,
+        M_cruise=M_cruise,
+        cruise_time=cruise_time,
+        total_range=total_range,
+    )
 
-    a_cruise = speed_of_sound(h_cruise)
-    V_cruise = M_cruise * a_cruise
+    a_cruise = profile["a_cruise"]
+    V_cruise = profile["V_cruise"]
 
-    t_to_cruise = math.sqrt(2.0 * h_cruise / acc_y)
+    t_to_cruise = profile["t_to_cruise"]
+    dv_x_to_cruise = profile["dv_x_to_cruise"]
+    dv_y_to_cruise = profile["dv_y_to_cruise"]
 
-    dv_x_to_cruise = acc_x * t_to_cruise
-    dv_y_to_cruise = acc_y * t_to_cruise
+    V_at_cruise_height = profile["V_at_cruise_height"]
+    M_at_cruise_height = profile["M_at_cruise_height"]
+    M_horizontal_start = profile["M_horizontal_start"]
 
-    V_at_cruise_height = math.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
-    M_at_cruise_height = V_at_cruise_height / a_cruise
-    M_horizontal_start = dv_x_to_cruise / a_cruise
-
-    dx_to_cruise = 0.5 * acc_x * t_to_cruise**2
-    dx_hor_acc = (V_cruise**2 - dv_x_to_cruise**2) / (2.0 * acc_tot)
-
-    cruise_cond_start_x = dx_to_cruise + dx_hor_acc
-    cruise_range = cruise_time * V_cruise
-    cruise_cond_end_x = cruise_cond_start_x + cruise_range
+    dx_to_cruise = profile["dx_to_cruise"]
+    dx_hor_acc = profile["dx_horizontal_acceleration"]
+    cruise_cond_start_x = profile["cruise_cond_start_x"]
+    cruise_range = profile["cruise_range"]
+    cruise_cond_end_x = profile["cruise_cond_end_x"]
 
     switch_state = find_ascent_state_at_mach(
         target_mach=M_turbo_to_ram,
@@ -995,6 +1366,9 @@ if __name__ == "__main__":
     print(f"dx_to_cruise:               {dx_to_cruise / 1000:.3f} km")
     print(f"dx_horizontal_acceleration: {dx_hor_acc / 1000:.3f} km")
     print(f"cruise_range:               {cruise_range / 1000:.3f} km")
+    print(f"x_descent:                  {profile['x_descent'] / 1000:.3f} km")
+    print(f"final_total_range:          {profile['final_total_range'] / 1000:.3f} km")
+    print(f"descent_fits_9500km:        {profile['descent_fits_total_range']}")
 
     # Ramjet model
     if switch_state["target_reached"]:
@@ -1257,7 +1631,10 @@ if __name__ == "__main__":
             f"{segment.name:<42s} "
             f"D={D_used:>12.3f} N   "
             f"T={T_display:>12.3f} N   "
-            f"CL={aero.get('C_L_calc', 0.0):>8.4f}   "
+            f"alpha={aero.get('alpha_deg', 0.0):>5.2f} deg   "
+            f"CL_sched={aero.get('C_L_calc', 0.0):>8.4f}   "
+            f"CL_req={aero.get('C_L_force_balance', 0.0):>8.4f}   "
+            f"CL_ratio={aero.get('lift_balance_ratio', 0.0):>6.3f}   "
             f"CD={aero.get('C_D_calc', 0.0):>8.5f}   "
             f"L/D={aero.get('L_over_D_calc', 0.0):>8.3f}   "
             f"q={aero.get('q', 0.0):>10.1f} Pa   "
