@@ -47,16 +47,19 @@ def isa_pressure(altitude_m: float) -> float:
         L = -0.0065
         T = T0 + L * altitude_m
         return 101325.0 * (T / T0) ** (-g0 / (L * R))
+
     elif altitude_m <= 20_000.0:
         T = 216.65
         p11 = 22632.06
         return p11 * math.exp(-g0 * (altitude_m - 11_000.0) / (R * T))
+
     elif altitude_m <= 32_000.0:
         T20 = 216.65
         p20 = 5474.89
         L = 0.001
         T = T20 + L * (altitude_m - 20_000.0)
         return p20 * (T / T20) ** (-g0 / (L * R))
+
     else:
         T = 228.65
         p32 = 868.02
@@ -81,6 +84,7 @@ def mach_to_velocity(mach: float, altitude_m: float) -> float:
 def dynamic_pressure_from_mach_altitude(mach: float, altitude_m: float) -> float:
     if mach <= 0:
         raise ValueError("mach must be positive for dynamic pressure calculation.")
+
     rho = isa_density(altitude_m)
     V = mach_to_velocity(mach, altitude_m)
     return 0.5 * rho * V**2
@@ -88,8 +92,6 @@ def dynamic_pressure_from_mach_altitude(mach: float, altitude_m: float) -> float
 
 # =============================================================================
 # C_D polar interpolation
-# =============================================================================
-# C_D = a(M) C_L^2 + b(M) C_L + c(M)
 # =============================================================================
 
 MACH_POLAR_DATA = np.array([0.65, 0.9, 1.1, 1.3, 2.0, 5.37, 7.38, 10.61])
@@ -115,8 +117,6 @@ def mach_regime(M: float) -> str:
 
 # =============================================================================
 # C_L-alpha interpolation
-# =============================================================================
-# C_L = m(M) alpha_deg + k(M)
 # =============================================================================
 
 MACH_CL_ALPHA_DATA = np.array([0.65, 0.9, 1.1, 1.3, 2.0, 5.37, 7.38, 10.61])
@@ -147,7 +147,11 @@ CL_ALPHA_SLOPE_INTERP = PchipInterpolator(MACH_CL_ALPHA_DATA, CL_ALPHA_SLOPE_DAT
 CL_ALPHA_INTERCEPT_INTERP = PchipInterpolator(MACH_CL_ALPHA_DATA, CL_ALPHA_INTERCEPT_DATA)
 
 
-def cl_from_mach_alpha(M: float, alpha_deg: float, clamp_mach: bool = True) -> tuple[float, dict[str, float | str]]:
+def cl_from_mach_alpha(
+    M: float,
+    alpha_deg: float,
+    clamp_mach: bool = True,
+) -> tuple[float, dict[str, float | str]]:
     M_original = float(M)
 
     if clamp_mach:
@@ -190,6 +194,7 @@ def cd_from_mach_cl(M: float, CL: float, clamp_mach: bool = True) -> tuple[float
     a = float(A_POLAR_INTERP(M_used))
     b = float(B_POLAR_INTERP(M_used))
     c = float(C_POLAR_INTERP(M_used))
+
     CD = a * CL**2 + b * CL + c
 
     return CD, {
@@ -204,13 +209,6 @@ def cd_from_mach_cl(M: float, CL: float, clamp_mach: bool = True) -> tuple[float
 
 # =============================================================================
 # EngineSim thrust-Mach polynomial interpolation
-# =============================================================================
-# Polynomial form:
-#     T_curve = a M^2 + b M + c
-#
-# Assumption:
-#     The EngineSim curve output is kN per engine/module.
-#     Total vehicle thrust = T_curve * 1000 * engine_count.
 # =============================================================================
 
 THRUST_CURVE_TO_N = 1000.0
@@ -302,74 +300,6 @@ def thrust_from_mach_altitude(
 
 
 # =============================================================================
-# Ramjet Isp model
-# =============================================================================
-
-def ramjet_temperature_ratio_max(M0: float, gamma: float = 1.29) -> float:
-    if M0 <= 0:
-        raise ValueError("M0 must be positive.")
-    numerator = (1.0 + ((gamma - 1.0) / 2.0) * M0**2) ** 3
-    denominator = (1.0 + ((gamma - 1.0) / 4.0) * M0**2) ** 2
-    return numerator / denominator
-
-
-def ramjet_thrust_and_isp(
-    M0: float,
-    altitude_m: float,
-    A3: float,
-    gamma: float = 1.29,
-    T4_T0: float | None = None,
-    h_f_mass: float = 120.0e6,
-    eta_thrust: float = 0.85,
-    eta_isp: float = 0.60,
-) -> tuple[float, float, dict[str, float]]:
-    if M0 <= 0:
-        raise ValueError("M0 must be positive.")
-    if A3 <= 0:
-        raise ValueError("A3 must be positive.")
-    if h_f_mass <= 0:
-        raise ValueError("h_f_mass must be positive.")
-
-    g0 = 9.80665
-    p0 = isa_pressure(altitude_m)
-    a0 = speed_of_sound(altitude_m)
-
-    if T4_T0 is None:
-        T4_T0 = ramjet_temperature_ratio_max(M0, gamma)
-
-    stagnation_factor = 1.0 + ((gamma - 1.0) / 2.0) * M0**2
-    root_term = math.sqrt(T4_T0 / stagnation_factor)
-
-    thrust_ideal = p0 * A3 * gamma * M0**2 * (root_term - 1.0)
-    thrust = eta_thrust * thrust_ideal
-
-    isp_velocity_ideal = (
-        (h_f_mass / a0)
-        * (gamma - 1.0)
-        * M0
-        / (stagnation_factor * (root_term + 1.0))
-    )
-    I_sp = eta_isp * isp_velocity_ideal / g0
-
-    return thrust, I_sp, {
-        "M0": M0,
-        "altitude_m": altitude_m,
-        "p0": p0,
-        "a0": a0,
-        "A3": A3,
-        "gamma": gamma,
-        "T4_T0": T4_T0,
-        "root_term": root_term,
-        "thrust_ideal": thrust_ideal,
-        "thrust": thrust,
-        "isp_velocity_ideal": isp_velocity_ideal,
-        "I_sp": I_sp,
-        "eta_thrust": eta_thrust,
-        "eta_isp": eta_isp,
-    }
-
-
-# =============================================================================
 # K_W as function of tau and configuration
 # =============================================================================
 
@@ -414,6 +344,8 @@ class MissionSegment:
     delta_t: float = 0.0
     fixed_fraction: float = 1.0
 
+    max_total_accel_g: float = 0.20
+
 
 def segment_lift_required(segment: MissionSegment, W_current: float) -> float:
     gamma_rad = math.radians(segment.flight_path_angle_deg)
@@ -426,7 +358,7 @@ def scheduled_alpha_for_segment(segment: MissionSegment) -> float:
     M = segment.mach_drag
 
     if "takeoff" in name:
-        return 8.5
+        return 12.0
     if "landing" in name:
         return 10.5
     if "descent" in name:
@@ -513,31 +445,117 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float, S_plan: f
     if segment.mode == "fixed":
         fraction = segment.fixed_fraction
 
+        gamma_rad = math.radians(segment.flight_path_angle_deg)
+        a_total_max = segment.max_total_accel_g * segment.g
+        vertical_accel_m_s2 = segment.g * math.sin(gamma_rad)
+
+        if abs(vertical_accel_m_s2) >= a_total_max:
+            a_x_allow = 0.0
+        else:
+            a_x_allow = math.sqrt(a_total_max**2 - vertical_accel_m_s2**2)
+
+        if segment.fuel_type == "none" or segment.propulsion_mode == "none":
+            T_used = 0.0
+        else:
+            T_used = min(segment.T, D_used + W_current * a_x_allow)
+
+        axial_accel_m_s2 = max(0.0, (T_used - D_used) / W_current)
+        total_accel_m_s2 = math.sqrt(axial_accel_m_s2**2 + vertical_accel_m_s2**2)
+
+        aero_info["T_available"] = segment.T
+        aero_info["T_used"] = T_used
+        aero_info["T_accel_limited"] = D_used + W_current * a_x_allow
+        aero_info["axial_accel_m_s2"] = axial_accel_m_s2
+        aero_info["vertical_accel_m_s2"] = vertical_accel_m_s2
+        aero_info["total_accel_m_s2"] = total_accel_m_s2
+        aero_info["axial_accel_g"] = axial_accel_m_s2 / segment.g
+        aero_info["vertical_accel_g"] = vertical_accel_m_s2 / segment.g
+        aero_info["total_accel_g"] = total_accel_m_s2 / segment.g
+        aero_info["a_x_allow_m_s2"] = a_x_allow
+
     elif segment.mode == "T_gt_D":
-        if segment.T <= D_used:
-            raise ValueError(
-                f"For segment '{segment.name}', mode='T_gt_D' requires T > D. "
-                f"Current T={segment.T:.3f} N, D={D_used:.3f} N."
-            )
         if segment.I_sp <= 0:
             raise ValueError(f"For segment '{segment.name}', I_sp must be positive.")
         if segment.V_average <= 0:
             raise ValueError(f"For segment '{segment.name}', V_average must be positive.")
+        if W_current <= 0:
+            raise ValueError(f"For segment '{segment.name}', W_current must be positive.")
+
+        T_available = segment.T
+        gamma_rad = math.radians(segment.flight_path_angle_deg)
+
+        a_total_max = segment.max_total_accel_g * segment.g
+        a_y = segment.g * math.sin(gamma_rad)
+
+        if abs(a_y) >= a_total_max:
+            a_x_allow = 0.0
+        else:
+            a_x_allow = math.sqrt(a_total_max**2 - a_y**2)
+
+        T_accel_limited = D_used + W_current * a_x_allow
+        T_used = min(T_available, T_accel_limited)
+
+        if T_available <= D_used:
+            raise ValueError(
+                f"For segment '{segment.name}', available thrust is below drag. "
+                f"T_available={T_available:.3f} N, D={D_used:.3f} N."
+            )
+
+        if T_used <= D_used:
+            raise ValueError(
+                f"For segment '{segment.name}', acceleration-limited thrust is below drag. "
+                f"T_used={T_used:.3f} N, D={D_used:.3f} N. "
+                f"Try increasing max_total_accel_g or changing trajectory."
+            )
+
+        axial_accel_m_s2 = (T_used - D_used) / W_current
+        vertical_accel_m_s2 = a_y
+        total_accel_m_s2 = math.sqrt(axial_accel_m_s2**2 + vertical_accel_m_s2**2)
+
+        axial_accel_g = axial_accel_m_s2 / segment.g
+        vertical_accel_g = vertical_accel_m_s2 / segment.g
+        total_accel_g = total_accel_m_s2 / segment.g
 
         delta_energy_height = segment.delta_h + (segment.V_final**2 - segment.V_initial**2) / (2.0 * segment.g)
+
         exponent = -delta_energy_height / (
-            segment.I_sp * segment.V_average * (1.0 - D_used / segment.T)
+            segment.I_sp
+            * segment.V_average
+            * (1.0 - D_used / T_used)
         )
         fraction = math.exp(exponent)
+
+        aero_info["T_available"] = T_available
+        aero_info["T_accel_limited"] = T_accel_limited
+        aero_info["T_used"] = T_used
+        aero_info["axial_accel_m_s2"] = axial_accel_m_s2
+        aero_info["vertical_accel_m_s2"] = vertical_accel_m_s2
+        aero_info["total_accel_m_s2"] = total_accel_m_s2
+        aero_info["axial_accel_g"] = axial_accel_g
+        aero_info["vertical_accel_g"] = vertical_accel_g
+        aero_info["total_accel_g"] = total_accel_g
+        aero_info["a_x_allow_m_s2"] = a_x_allow
 
     elif segment.mode == "T_eq_D":
         if segment.I_sp <= 0:
             raise ValueError(f"For segment '{segment.name}', I_sp must be positive.")
         if W_current <= 0:
             raise ValueError(f"For segment '{segment.name}', W_current must be positive.")
+
         W_current_force = W_current * segment.g
         exponent = -(D_used * segment.delta_t) / (segment.I_sp * W_current_force)
         fraction = math.exp(exponent)
+
+        aero_info["T_available"] = segment.T
+        aero_info["T_used"] = D_used
+        aero_info["T_accel_limited"] = D_used
+        aero_info["axial_accel_m_s2"] = 0.0
+        aero_info["vertical_accel_m_s2"] = 0.0
+        aero_info["total_accel_m_s2"] = 0.0
+        aero_info["axial_accel_g"] = 0.0
+        aero_info["vertical_accel_g"] = 0.0
+        aero_info["total_accel_g"] = 0.0
+        aero_info["a_x_allow_m_s2"] = 0.0
 
     else:
         raise ValueError("mode must be 'fixed', 'T_gt_D', or 'T_eq_D'.")
@@ -1150,7 +1168,6 @@ def compute_flight_profile(
 
 if __name__ == "__main__":
 
-    # Mission profile
     gamma_mission = 10.0
     h0 = 0.0
     h_cruise = 35_000.0
@@ -1235,7 +1252,6 @@ if __name__ == "__main__":
     T_ramjet_horizontal, thrust_ram_horizontal_info = thrust_from_mach_altitude("ram", M_ramjet_horizontal, h_ramjet_horizontal)
     T_scramjet_cruise, thrust_scram_info = thrust_from_mach_altitude("scram", M_scramjet_cruise, h_scramjet_cruise)
 
-    # Isp estimates: keep your original segment assumptions.
     Isp_turbojet = 2100.0
     Isp_ramjet = 3500.0
     Isp_scramjet = 1500.0
@@ -1248,7 +1264,6 @@ if __name__ == "__main__":
     print(f"Ramjet horizontal:   M={M_ramjet_horizontal:.3f}, h={h_ramjet_horizontal:.1f} m, T={T_ramjet_horizontal:.3f} N")
     print(f"Scramjet cruise:     M={M_scramjet_cruise:.3f}, h={h_scramjet_cruise:.1f} m, T={T_scramjet_cruise:.3f} N")
 
-    # Mission segments
     segments = [
         MissionSegment(
             name="1_takeoff",
@@ -1256,9 +1271,9 @@ if __name__ == "__main__":
             fuel_type="JetA",
             propulsion_mode="turbojet",
             fixed_fraction=0.990,
-            mach_drag=0.2,
+            mach_drag=0.30,
             altitude_drag=h0,
-            flight_path_angle_deg=0.0,
+            flight_path_angle_deg=5.0,
             T=T_takeoff,
         ),
     ]
@@ -1279,6 +1294,7 @@ if __name__ == "__main__":
                 altitude_drag=h_turbo_ascent,
                 flight_path_angle_deg=gamma_mission,
                 T=T_turbojet_operating,
+                max_total_accel_g=0.20,
             )
         )
 
@@ -1297,6 +1313,7 @@ if __name__ == "__main__":
                 altitude_drag=h_ramjet_ascent,
                 flight_path_angle_deg=gamma_mission,
                 T=T_ramjet_ascent,
+                max_total_accel_g=0.20,
             )
         )
     else:
@@ -1315,6 +1332,7 @@ if __name__ == "__main__":
                 altitude_drag=0.5 * h_cruise,
                 flight_path_angle_deg=gamma_mission,
                 T=T_turbojet_operating,
+                max_total_accel_g=0.20,
             )
         )
 
@@ -1340,6 +1358,7 @@ if __name__ == "__main__":
             altitude_drag=h_ramjet_horizontal,
             flight_path_angle_deg=0.0,
             T=T_ramjet_horizontal,
+            max_total_accel_g=0.20,
         )
     )
 
@@ -1378,13 +1397,12 @@ if __name__ == "__main__":
                 fixed_fraction=0.997,
                 mach_drag=0.25,
                 altitude_drag=h0,
-                flight_path_angle_deg=0.0,
+                flight_path_angle_deg=-3.0,
                 T=T_takeoff,
             ),
         ]
     )
 
-    # Run sizing
     S_plan, W_to, result = converge_S_plan_and_TOGW(
         tau=0.14,
         configuration="blended_body",
@@ -1456,13 +1474,15 @@ if __name__ == "__main__":
     for segment in segments:
         D_used = result["segment_drags"].get(segment.name, 0.0)
         aero = result["segment_aero"].get(segment.name, {})
-        T_display = segment.T
+        T_used = aero.get("T_used", segment.T)
+        T_available = aero.get("T_available", segment.T)
 
         print(
             f"{segment.name:<42s} "
             f"D={D_used:>12.3f} N   "
-            f"T={T_display:>12.3f} N   "
-            f"T/D={T_display / D_used if D_used > 0 else 0.0:>8.3f}   "
+            f"T_used={T_used:>12.3f} N   "
+            f"T_avail={T_available:>12.3f} N   "
+            f"T/D={T_used / D_used if D_used > 0 else 0.0:>8.3f}   "
             f"alpha={aero.get('alpha_deg', 0.0):>5.2f} deg   "
             f"CL_sched={aero.get('C_L_calc', 0.0):>8.4f}   "
             f"CL_req={aero.get('C_L_force_balance', 0.0):>8.4f}   "
@@ -1474,6 +1494,9 @@ if __name__ == "__main__":
             f"polar_M={aero.get('mach_used_for_polar', segment.mach_drag):>5.2f}   "
             f"regime={aero.get('mach_regime', 'unknown'):>10s}   "
             f"h={segment.altitude_drag:>8.1f} m"
+            f"a_x={aero.get('axial_accel_g', 0.0):>6.3f} g   "
+            f"a_y={aero.get('vertical_accel_g', 0.0):>6.3f} g   "
+            f"a_tot={aero.get('total_accel_g', 0.0):>6.3f} g   "
         )
 
     print("\nWeight breakdown")
