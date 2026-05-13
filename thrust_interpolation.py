@@ -42,57 +42,55 @@ def thrust_from_poly(M: float, coeffs: tuple[float, float, float]) -> float:
     return a * M**2 + b * M + c
 
 
+# Pre-build one PCHIP interpolant per coefficient (a, b, c) per engine type.
+# This avoids rebuilding interpolators on every thrust query.
+_COEFF_INTERP: dict[str, tuple] = {}
+for _ptype, _alt_data in THRUST_POLY_DATA.items():
+    _alts = np.array(sorted(_alt_data.keys()), dtype=float)
+    _COEFF_INTERP[_ptype] = (
+        PchipInterpolator(_alts, [_alt_data[h][0] for h in _alts]),  # a(alt)
+        PchipInterpolator(_alts, [_alt_data[h][1] for h in _alts]),  # b(alt)
+        PchipInterpolator(_alts, [_alt_data[h][2] for h in _alts]),  # c(alt)
+        float(_alts.min()),
+        float(_alts.max()),
+    )
+del _ptype, _alt_data, _alts
+
+
 def thrust_from_mach_altitude(
     propulsion_type: str,
     M: float,
     altitude_m: float,
     clamp_altitude: bool = True,
 ) -> tuple[float, dict[str, float | str]]:
-    """
-    Interpolate thrust over altitude for a given propulsion type.
-
-    Steps:
-        1. Evaluate each altitude-specific thrust-Mach polynomial at Mach M.
-        2. Interpolate those thrust values over altitude using PCHIP.
-
-    propulsion_type:
-        "turbo", "ram", or "scram"
-    """
-
-    propulsion_type = propulsion_type.lower()
-
-    if propulsion_type not in THRUST_POLY_DATA:
+    ptype = propulsion_type.lower()
+    if ptype not in _COEFF_INTERP:
         raise ValueError("propulsion_type must be 'turbo', 'ram', or 'scram'.")
 
-    altitude_data = THRUST_POLY_DATA[propulsion_type]
-
-    altitudes = np.array(sorted(altitude_data.keys()), dtype=float)
+    a_interp, b_interp, c_interp, alt_min, alt_max = _COEFF_INTERP[ptype]
 
     if clamp_altitude:
-        altitude_used = float(np.clip(altitude_m, altitudes.min(), altitudes.max()))
+        altitude_used = float(np.clip(altitude_m, alt_min, alt_max))
     else:
-        if altitude_m < altitudes.min() or altitude_m > altitudes.max():
+        if altitude_m < alt_min or altitude_m > alt_max:
             raise ValueError(
-                f"Altitude {altitude_m:.1f} m outside available range for {propulsion_type}: "
-                f"{altitudes.min():.1f} to {altitudes.max():.1f} m."
+                f"Altitude {altitude_m:.1f} m outside available range for {ptype}: "
+                f"{alt_min:.1f} to {alt_max:.1f} m."
             )
         altitude_used = float(altitude_m)
 
-    thrust_values = np.array([
-        thrust_from_poly(M, altitude_data[h])
-        for h in altitudes
-    ])
-
-    thrust_alt_interp = PchipInterpolator(altitudes, thrust_values)
-    thrust = float(thrust_alt_interp(altitude_used))
+    a = float(a_interp(altitude_used))
+    b = float(b_interp(altitude_used))
+    c = float(c_interp(altitude_used))
+    thrust = a * M**2 + b * M + c
 
     return thrust, {
-        "propulsion_type": propulsion_type,
+        "propulsion_type": ptype,
         "M": M,
         "altitude_original_m": altitude_m,
         "altitude_used_m": altitude_used,
-        "altitude_min_m": float(altitudes.min()),
-        "altitude_max_m": float(altitudes.max()),
+        "altitude_min_m": alt_min,
+        "altitude_max_m": alt_max,
         "thrust": thrust,
     }
 
@@ -103,18 +101,14 @@ def thrust_curve_vs_mach(
     mach_values: np.ndarray,
     clamp_altitude: bool = True,
 ) -> np.ndarray:
-    thrust_values = []
-
-    for M in mach_values:
-        thrust, _ = thrust_from_mach_altitude(
-            propulsion_type=propulsion_type,
-            M=float(M),
-            altitude_m=altitude_m,
-            clamp_altitude=clamp_altitude,
-        )
-        thrust_values.append(thrust)
-
-    return np.array(thrust_values)
+    ptype = propulsion_type.lower()
+    a_interp, b_interp, c_interp, alt_min, alt_max = _COEFF_INTERP[ptype]
+    altitude_used = float(np.clip(altitude_m, alt_min, alt_max)) if clamp_altitude else float(altitude_m)
+    a = float(a_interp(altitude_used))
+    b = float(b_interp(altitude_used))
+    c = float(c_interp(altitude_used))
+    M = np.asarray(mach_values, dtype=float)
+    return a * M**2 + b * M + c
 
 T, info = thrust_from_mach_altitude(
     propulsion_type="ram",
