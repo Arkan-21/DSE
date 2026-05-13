@@ -55,8 +55,8 @@ csv_file = "density_velocity_database.csv"
 
 altitude = 25000.0  # [m]
 
-nose_radius = 0.03
-emissivity = 0.85
+nose_radius = 0.003
+emissivity = 0.7
 plate_length = 20
 
 sigma = 5.670374419e-8
@@ -279,12 +279,14 @@ q_stag = stagnation_heating(
     nose_radius
 )
 
+
+
 T_stag = (
     q_stag
     /
     (emissivity * sigma)
 )**0.25
-
+print(T_stag)
 # =============================================================================
 # GRID
 # =============================================================================

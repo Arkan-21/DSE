@@ -1614,8 +1614,8 @@ if __name__ == "__main__":
 
     h_km = 25.0
     Ma0  = 5.0
-    mdot = 100.0
-    phi  = 0.5
+    mdot = 500.0
+    phi  = 0.65
 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET PERFORMANCE ANALYSIS (H₂ fuel, φ={phi})")
