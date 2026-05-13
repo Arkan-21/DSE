@@ -7,15 +7,16 @@ import matplotlib.lines as mlines
 from isa_atmosphere import T, density
 #from drag import drag_and_ramjet_at_condition
 from empirical_drag import drag_from_mach_alpha 
-from Engine.scramjet_01 import Engine
+from Engine.scramjet_01 import Scramjet
+from Engine.ramjet_01 import Ramjet
 from thrust_interpolation import thrust_curve_vs_mach
 
 km = lambda x: np.asarray(x) / 1e3            # helper: metres → km
 
 ENGINE_TRANSITION_MACH = {"T2R": 3.0, "R2S": 5.0}  # Mach numbers at which engine transitions occur (for markers on the plot)
 
-def scramjet_thrust(altitude, mach=5.0):
-    eng = Engine()
+def thrust(eng, altitude, mach):
+    
     h = altitude # m
     Ma0  = mach
     mdot = 500.0
@@ -27,7 +28,7 @@ def scramjet_thrust(altitude, mach=5.0):
     sec3 = eng.combustor_properties3(sec2, phi=phi)
     sec4 = eng.combustor_properties4(sec3)
 
-    if sec4["thermal_choke"]:
+    if sec4["thermal_choke"] and type == "scram":
         print("\n⚠ THERMAL CHOKE DETECTED in combustor!")
         print(f"  → Last Ma = {sec4['Ma4']:.4f}")
     else:
@@ -96,11 +97,15 @@ def compute_mach_profile(samples,dx_to_cruise, cruise_cond_start_x, cruise_cond_
     M_profile = np.zeros_like(x_profile)
     t_profile = np.zeros_like(x_profile)
     Thrust_profile = np.zeros_like(x_profile)
+    Thrust_profile_Anita = np.zeros_like(x_profile)
     Drag_profile = np.zeros_like(x_profile)
 
     v_desc_max = -1
     t_acc_end = 0
     t_desc_max = 0
+
+    scram = Scramjet()
+    ram = Ramjet()
     for i, x in enumerate(x_profile):
         if x < dx_to_cruise:
             t = np.sqrt(2 * x / (acc_tot * np.cos(np.radians(gamma))))
@@ -142,36 +147,26 @@ def compute_mach_profile(samples,dx_to_cruise, cruise_cond_start_x, cruise_cond_
         result = drag_from_mach_alpha(M_profile[i], alpha, h_profile[i], S_ref)
       
         Drag_profile[i] = result["D"]
+    
 
         if M_profile[i]>=ENGINE_TRANSITION_MACH["R2S"]:
+
             if Thrust_profile[i-1] == 0:
-                Thrust_profile[i] = scramjet_thrust(h_profile[i], M_profile[i])
+                Thrust_profile_Anita[i] = thrust(scram, h_profile[i], M_profile[i])
             else:
-                Thrust_profile[i] = Thrust_profile[i-1]
+                Thrust_profile_Anita[i] = Thrust_profile_Anita[i-1]
+            
+            Thrust_profile[i] = thrust_curve_vs_mach("scram", h_profile[i], np.array([M_profile[i]]))[0]*1000  # convert kN to N
         elif M_profile[i] < ENGINE_TRANSITION_MACH["T2R"]:
             Thrust_profile[i] = thrust_curve_vs_mach("turbo", h_profile[i], np.array([M_profile[i]]))[0]*1000  # convert kN to N
+            #Thrust_profile_Anita[i] = thrust(h_profile[i], M_profile[i], type="turbo")
         else:
             Thrust_profile[i] = thrust_curve_vs_mach("ram", h_profile[i], np.array([M_profile[i]]))[0]*1000  # convert kN to N
-
-        '''
-        if M_profile[i] < ENGINE_TRANSITION_MACH["R2S"] and M_profile[i] >= ENGINE_TRANSITION_MACH["T2R"]:
-
-            result = drag_and_ramjet_at_condition(
-                mass_kg=100_000,
-                S_plan=450,
-                altitude_m=h_profile[i],
-                velocity_m_s=v_profile[i],
-                CD0=0.040,
-                k=0.171,
-                A3_ramjet=2 * 0.7739,
-                flight_path_angle_deg=gamma if x < cruise_cond_start_x else 0.0,
-            )
-            print(result["ramjet_thrust_N"])
-            Thrust_profile[i] =  result["ramjet_thrust_N"]
-        '''
+            Thrust_profile_Anita[i] = thrust(ram, h_profile[i], M_profile[i])
+        
 
     print(f"Shape of the thrust profile: {Thrust_profile.shape}")
-    return x_profile, v_profile, h_profile, M_profile, t_profile, Thrust_profile, Drag_profile
+    return x_profile, v_profile, h_profile, M_profile, t_profile, Thrust_profile, Thrust_profile_Anita, Drag_profile
 
 
 
@@ -199,7 +194,7 @@ _MARKER_M5 = dict(marker='*', s=120, zorder=5)   # M=5 reached
 
 
 def _plot_one_profile(ax1, ax2, ax3, ax4, gamma, h_cruise, acc_tot, x_sample, *,
-                      color_ascent, color_main, label,
+                      color_ascent, color_main, color_thrust, color_anita, label,
                       main_label='_nolegend_',
                       show_h_marker=True,  h_marker_label=False,
                       show_m5_marker=True, m5_marker_label=False):
@@ -259,8 +254,8 @@ def _plot_one_profile(ax1, ax2, ax3, ax4, gamma, h_cruise, acc_tot, x_sample, *,
         print(f"Sample point at x={x_sample} m: altitude={h_sample} m, velocity={v_sample} m/s, density={density_sample} kg/m³")
 
     # ── Mach plot ──────────────────────────────────────────────────────────────
-    x_prof, _, _, M_prof, _ , Thrust_profile, Drag_profile = compute_mach_profile(
-        5000, dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, x_descent,
+    x_prof, _, _, M_prof, _ , Thrust_profile, Thrust_profile_Anita, Drag_profile = compute_mach_profile(
+        500, dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, x_descent,
         dv_x_to_cruise, V_cruise, gamma, a_x_descent, a_y_descent, h_cruise, acc_tot
     )
     mask_asc = x_prof <= dx_to_cruise
@@ -284,11 +279,14 @@ def _plot_one_profile(ax1, ax2, ax3, ax4, gamma, h_cruise, acc_tot, x_sample, *,
     ax4.plot(km(x_prof[mask_asc]),  Drag_profile[mask_asc],  color=color_main, lw=1.8, label="Drag")
     ax4.plot(km(x_prof[~mask_asc]), Drag_profile[~mask_asc], color=color_main,   lw=1.8, label="Drag")
     if np.any(Thrust_profile > 0):
-        ax4.plot(km(x_prof[mask_asc]), Thrust_profile[mask_asc], color=color_ascent, lw=1.8, label='Thrust (N)')
-        ax4.plot(km(x_prof[~mask_asc]), Thrust_profile[~mask_asc], color=color_ascent, lw=1.8, label='Thrust (N)')
+        ax4.plot(km(x_prof[mask_asc]), Thrust_profile[mask_asc], color=color_thrust, lw=1.8, label='Thrust (N)')
+        ax4.plot(km(x_prof[~mask_asc]), Thrust_profile[~mask_asc], color=color_thrust, lw=1.8, label='Thrust (N)')
+    if np.any(Thrust_profile_Anita > 0):
+        ax4.plot(km(x_prof[mask_asc]), Thrust_profile_Anita[mask_asc], color=color_anita, lw=1.8, label='Thrust (N) (Anita)')
+        ax4.plot(km(x_prof[~mask_asc]), Thrust_profile_Anita[~mask_asc], color=color_anita, lw=1.8, label='Thrust (N) (Anita)')
 
     
-    return a_cruise, Thrust_profile, Drag_profile, x_prof
+    return a_cruise, Thrust_profile, Thrust_profile_Anita, Drag_profile, x_prof
 
 
 def _decorate_axes(ax1, ax2, ax3, ax4, total_range):
@@ -364,6 +362,8 @@ def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3
         n = len(sweep_values)
         blue_shades = plt.cm.Blues(np.linspace(0.4, 0.9, n))
         red_shades  = plt.cm.Reds (np.linspace(0.4, 0.9, n))
+        Thrust_shades1 = plt.cm.Greens(np.linspace(0.4, 0.9, n))
+        Thrust_shades2 = plt.cm.Oranges(np.linspace(0.4, 0.9, n))
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
         if gammas_is_seq:
@@ -385,14 +385,14 @@ def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3
                 
                 
 
-            a_cruise, Thrust_profile, Drag_profile, x_prof = _plot_one_profile(
+            a_cruise, Thrust_profile, Thrust_profile_Anita, Drag_profile, x_prof = _plot_one_profile(
                 ax1, ax2, ax3, ax4, g, h, acc_tot, x_sample,
-                color_ascent=blue_shades[i], color_main=red_shades[i], label=lbl,
+                color_ascent=blue_shades[i], color_main=red_shades[i], color_thrust=Thrust_shades1[i], color_anita=Thrust_shades2[i], label=lbl,
                 show_h_marker=True,  h_marker_label=(i == 0),
                 show_m5_marker=True, m5_marker_label=(i == 0),
             )
        
-            plot_excess_thrust(ax5,lbl ,Thrust_profile, Drag_profile, x_prof)
+            plot_excess_thrust(ax5,lbl ,Thrust_profile, Thrust_profile_Anita,Drag_profile, x_prof)
 
         _decorate_axes(ax1, ax2, ax3, ax4, total_range)
         _finalize_sweep_figure(fig, ax1, ax2, ax3, ax4, a_cruise, save)
@@ -408,7 +408,7 @@ def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3
     fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise at {h_cruise/1e3:.0f} km',
                  fontsize=13, fontweight='bold')
 
-    _, Thrust_profile, Drag_profile, x_prof = _plot_one_profile(
+    _, Thrust_profile, Thrust_profile_Anita, Drag_profile, x_prof = _plot_one_profile(
         ax1, ax2, ax3, ax4, gammas, h_cruise, acc_tot, x_sample,
         color_ascent='blue', color_main='red',
         label='Ascent to cruise height',
@@ -419,7 +419,7 @@ def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3
 
     _decorate_axes(ax1, ax2, ax3, ax4, total_range)
 
-    plot_excess_thrust(ax5, 'Single Profile', Thrust_profile, Drag_profile, x_prof)
+    plot_excess_thrust(ax5, 'Single Profile', Thrust_profile, Thrust_profile_Anita, Drag_profile, x_prof)
 
     if save:
         plt.savefig('mission_profile.png', dpi=300, bbox_inches='tight')
@@ -427,10 +427,11 @@ def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3
     if show:
         plt.show()
 
-def plot_excess_thrust(ax5, lbl, Thrust_profile, Drag_profile, x_prof):
+def plot_excess_thrust(ax5, lbl, Thrust_profile, Thrust_profile_Anita, Drag_profile, x_prof):
     # Make a separate plot for the difference between thrust and drag, since it has a very different scale and is more relevant for the single-profile case
     
     ax5.plot(km(x_prof), Thrust_profile - Drag_profile, lw=1.8, label=lbl)
+    ax5.plot(km(x_prof), Thrust_profile_Anita - Drag_profile, lw=1.8, label=f'{lbl} (Anita)')
     ax5.set_xlabel('Range (km)', fontsize=11)
     ax5.set_ylabel('Net Force (N)', fontsize=11)
     ax5.set_title('Net Force Profile', fontsize=11)
