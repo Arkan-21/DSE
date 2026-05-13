@@ -5,11 +5,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from isa_atmosphere import T, density
+#from drag import drag_and_ramjet_at_condition
+from empirical_drag import drag_from_mach_alpha 
 
 km = lambda x: np.asarray(x) / 1e3            # helper: metres → km
-def drag_acc(v,h,C_d=1.98,W=111389.645*9.81,A=425.682 ):
-    rho = density(h)
-    return 0.5 * rho * v**2 * C_d * A / W
+
+ENGINE_TRANSITION_MACH = {"T2R": 3.0, "R2S": 5.0}  # Mach numbers at which engine transitions occur (for markers on the plot)
 
 def compute_flight_profile(gamma,h_cruise,acc_tot=0.15*9.81,x_sample=-1):
 
@@ -58,7 +59,88 @@ def compute_flight_profile(gamma,h_cruise,acc_tot=0.15*9.81,x_sample=-1):
 
     a_x_descent, a_y_descent, x_descent = analyse_descent(cruise_cond_end_x, h_cruise, V_cruise, acc_tot)
 
+
+
     return dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, dv_y_to_cruise, dv_x_to_cruise, V_cruise, a_cruise, h_sample, v_sample, density_sample, a_x_descent, a_y_descent, x_descent
+
+def compute_mach_profile(samples,dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, x_descent, dv_x_to_cruise, V_cruise, gamma,a_x_descent, a_y_descent, h_cruise, acc_tot=0.15*9.81):
+    
+    total_range = cruise_cond_end_x + x_descent
+    x_profile = np.linspace(0, total_range, samples)
+    v_profile = np.zeros_like(x_profile)
+    h_profile = np.zeros_like(x_profile)
+    M_profile = np.zeros_like(x_profile)
+    t_profile = np.zeros_like(x_profile)
+    Thrust_profile = np.zeros_like(x_profile)
+    Drag_profile = np.zeros_like(x_profile)
+
+    v_desc_max = -1
+    t_acc_end = 0
+    t_desc_max = 0
+    for i, x in enumerate(x_profile):
+        if x < dx_to_cruise:
+            t = np.sqrt(2 * x / (acc_tot * np.cos(np.radians(gamma))))
+            t_profile[i] = t
+            v_profile[i] = np.sqrt((acc_tot * np.cos(np.radians(gamma)) * t)**2 + (acc_tot * np.sin(np.radians(gamma)) * t)**2)
+            h_profile[i] = 0.5 * acc_tot * np.sin(np.radians(gamma)) * t**2
+        elif x < cruise_cond_start_x:
+            x_acc = x - dx_to_cruise
+            v_profile[i] = np.sqrt(2*acc_tot*x_acc + dv_x_to_cruise**2)
+            h_profile[i] = h_cruise
+            t_profile[i] = (v_profile[i] - dv_x_to_cruise) / acc_tot
+            t_acc_end = t_profile[i]
+        elif x < cruise_cond_end_x:
+            v_profile[i] = V_cruise
+            h_profile[i] = h_cruise
+            t_profile[i] = t_acc_end + (x - cruise_cond_start_x) / V_cruise
+        else:
+            v_x = np.sqrt(max(0, V_cruise**2 + 2*a_x_descent*(x - cruise_cond_end_x)))
+            t = (V_cruise - v_x) / -a_x_descent
+            t_profile[i] = t_acc_end + (cruise_cond_end_x - cruise_cond_start_x) / V_cruise + t
+            h_phase1 = 0.5 * a_y_descent * t**2
+            if h_phase1 < h_cruise / 2:
+                h_profile[i] = h_cruise - h_phase1
+                v_y = a_y_descent * t
+                if v_y > v_desc_max:
+                    v_desc_max = v_y
+                    t_desc_max = t
+            else:
+                dt = t - t_desc_max
+                v_y = max(0.0, v_desc_max - a_y_descent * dt)
+                h_profile[i] = max(0.0, h_cruise / 2 - (v_desc_max * dt - 0.5 * a_y_descent * dt**2))
+
+            v_profile[i] = np.sqrt(v_x**2 + v_y**2)
+        T_profile = T(h_profile[i])
+        a_profile = np.sqrt(1.4 * 287.05 * T_profile)
+        M_profile[i] = v_profile[i] / a_profile
+        alpha = 3
+        S_ref = 425.682
+        result = drag_from_mach_alpha(M_profile[i], alpha, h_profile[i], S_ref)
+      
+        Drag_profile[i] = result["D"]
+
+        '''
+        if M_profile[i] < ENGINE_TRANSITION_MACH["R2S"] and M_profile[i] >= ENGINE_TRANSITION_MACH["T2R"]:
+
+            result = drag_and_ramjet_at_condition(
+                mass_kg=100_000,
+                S_plan=450,
+                altitude_m=h_profile[i],
+                velocity_m_s=v_profile[i],
+                CD0=0.040,
+                k=0.171,
+                A3_ramjet=2 * 0.7739,
+                flight_path_angle_deg=gamma if x < cruise_cond_start_x else 0.0,
+            )
+            print(result["ramjet_thrust_N"])
+            Thrust_profile[i] =  result["ramjet_thrust_N"]
+        '''
+
+    print(f"Shape of the thrust profile: {Thrust_profile.shape}")
+    return x_profile, v_profile, h_profile, M_profile, t_profile, Thrust_profile, Drag_profile
+
+
+
 
 
 def run_sensitivity_study(gammas, heights, acc_tot=0.15*9.81, total_range=9500e3, x_sample=-1):
@@ -75,306 +157,231 @@ def run_sensitivity_study(gammas, heights, acc_tot=0.15*9.81, total_range=9500e3
             with open('sensitivity_study_results.csv', 'a') as f:
                f.write(f"{gamma},{h_cruise},{dx_to_cruise},{cruise_cond_start_x},{cruise_cond_end_x},{dv_y_to_cruise},{dv_x_to_cruise},{v_at_h_cruise},{V_cruise},{a_cruise},{density_sample},{a_descent},{final_total_range}\n")
 
-def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3, x_sample =-1,save=False, show=True):
 
-    # Check for sensitivity study with respect to gamma (gammas is an array)
-    if isinstance(gammas, (list, np.ndarray)):
-        if isinstance(h_cruise, (list, np.ndarray)):
-            run_sensitivity_study(gammas, h_cruise, acc_tot, total_range, x_sample)
+# ── Plotting helpers ───────────────────────────────────────────────────────────
+# Marker styles for the two key events (used by all sweep plots)
+_MARKER_H  = dict(marker='^', s=70,  zorder=5)   # cruise height reached
+_MARKER_M5 = dict(marker='*', s=120, zorder=5)   # M=5 reached
 
-            warn.warn("No plot generated for sensitivity study with respect to both gamma and h_cruise. Results saved to 'sensitivity_study_results.csv'.")
-            return
-        
-        # ── Colour ramps ──────────────────────────────────────────────────────────────
-        n           = len(gammas)
+
+def _plot_one_profile(ax1, ax2, ax3, ax4, gamma, h_cruise, acc_tot, x_sample, *,
+                      color_ascent, color_main, label,
+                      main_label='_nolegend_',
+                      show_h_marker=True,  h_marker_label=False,
+                      show_m5_marker=True, m5_marker_label=False):
+    """Draw a single mission profile (altitude + velocity + Mach + Thrust) onto ax1, ax2, ax3, ax4.
+
+    Returns a_cruise so the caller can build the secondary Mach axis.
+    """
+    (dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x,
+     dv_y_to_cruise, dv_x_to_cruise, V_cruise, a_cruise,
+     h_sample, v_sample, density_sample,
+     a_x_descent, a_y_descent, x_descent) = compute_flight_profile(gamma, h_cruise, acc_tot, x_sample)
+
+    # ── Altitude plot ──────────────────────────────────────────────────────────
+    ax1.plot(km([0, dx_to_cruise]),
+             km([0, h_cruise]),
+             color=color_ascent, lw=1.8, label=label)
+    ax1.plot(km([dx_to_cruise, cruise_cond_end_x, cruise_cond_end_x + x_descent]),
+             km([h_cruise, h_cruise, 0]),
+             color=color_main, lw=1.8, label=main_label)
+
+    if show_h_marker:
+        ax1.scatter(km(dx_to_cruise), km(h_cruise),
+                    color=color_main, **_MARKER_H,
+                    label='Cruise height reached' if h_marker_label else '_nolegend_')
+    if show_m5_marker:
+        ax1.scatter(km(cruise_cond_start_x), km(h_cruise),
+                    color=color_main, **_MARKER_M5,
+                    label='M = 5 reached' if m5_marker_label else '_nolegend_')
+
+    # ── Velocity plot ──────────────────────────────────────────────────────────
+    _acc_x = acc_tot * np.cos(np.radians(gamma))
+    x_asc = np.linspace(0, dx_to_cruise, 200)
+    ax2.plot(km(x_asc), acc_tot * np.sqrt(2 * x_asc / _acc_x),
+             color=color_ascent, lw=1.8, label=label)
+    v_top = np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
+    ax2.plot(km([dx_to_cruise, dx_to_cruise]), [v_top, dv_x_to_cruise],
+             color=color_main, lw=1.2, ls='--')
+    x_hacc = np.linspace(dx_to_cruise, cruise_cond_start_x, 200)
+    ax2.plot(km(x_hacc), np.sqrt(2 * acc_tot * (x_hacc - dx_to_cruise) + dv_x_to_cruise**2),
+             color=color_main, lw=1.8, label=main_label)
+    ax2.plot(km([cruise_cond_start_x, cruise_cond_end_x, cruise_cond_end_x + x_descent]),
+             [V_cruise, V_cruise, 0],
+             color=color_main, lw=1.8)
+
+    if show_h_marker:
+        ax2.scatter(km(dx_to_cruise), v_top,
+                    color=color_main, **_MARKER_H,
+                    label='Cruise height reached' if h_marker_label else '_nolegend_')
+    if show_m5_marker:
+        ax2.scatter(km(cruise_cond_start_x), V_cruise,
+                    color=color_main, **_MARKER_M5,
+                    label='M = 5 reached' if m5_marker_label else '_nolegend_')
+
+    if x_sample >= 0:
+        ax2.scatter(km(x_sample), v_sample, color='purple', marker='X', s=100, zorder=5, label='Sample point')
+        ax1.scatter(km(x_sample), km(h_sample), color='purple', marker='X', s=100, zorder=5)
+        print(f"Sample point at x={x_sample} m: altitude={h_sample} m, velocity={v_sample} m/s, density={density_sample} kg/m³")
+
+    # ── Mach plot ──────────────────────────────────────────────────────────────
+    x_prof, _, _, M_prof, _ , Thrust_profile, Drag_profile = compute_mach_profile(
+        5000, dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, x_descent,
+        dv_x_to_cruise, V_cruise, gamma, a_x_descent, a_y_descent, h_cruise, acc_tot
+    )
+    mask_asc = x_prof <= dx_to_cruise
+    ax3.plot(km(x_prof[mask_asc]),  M_prof[mask_asc],  color=color_ascent, lw=1.8, label=label)
+    ax3.plot(km(x_prof[~mask_asc]), M_prof[~mask_asc], color=color_main,   lw=1.8, label=main_label)
+    
+    if show_h_marker:
+        h_idx = min(np.searchsorted(x_prof, dx_to_cruise), len(M_prof) - 1)
+        ax3.scatter(km(dx_to_cruise), M_prof[h_idx],
+                    color=color_main, **_MARKER_H,
+                    label='Cruise height reached' if h_marker_label else '_nolegend_')
+    if show_m5_marker:
+        ax3.scatter(km(cruise_cond_start_x), 5.0,
+                    color=color_main, **_MARKER_M5,
+                    label='M = 5 reached' if m5_marker_label else '_nolegend_')
+    if x_sample >= 0:
+        M_sample = v_sample / np.sqrt(1.4 * 287.05 * T(h_sample))
+        ax3.scatter(km(x_sample), M_sample, color='purple', marker='X', s=100, zorder=5)
+
+    # ── Thrust and Drag plot ──────────────────────────────────────────────────
+    ax4.plot(km(x_prof[mask_asc]),  Drag_profile[mask_asc],  color=color_main, lw=1.8, label=label)
+    ax4.plot(km(x_prof[~mask_asc]), Drag_profile[~mask_asc], color=color_main,   lw=1.8, label=main_label)
+    if np.any(Thrust_profile > 0):
+        ax4.plot(km(x_prof), Thrust_profile, color='green', lw=1.8, label='Ramjet thrust (N)')
+
+    return a_cruise
+
+
+def _decorate_axes(ax1, ax2, ax3, ax4, total_range):
+    """Set the shared axis labels, titles, grid, and minimum-range line."""
+    ax1.set_xlabel('Range (km)', fontsize=11)
+    ax1.set_ylabel('Altitude (km)', fontsize=11)
+    ax1.set_title('Altitude Profile', fontsize=11)
+    ax1.grid(True, alpha=0.35)
+    ax1.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
+
+    ax2.set_xlabel('Range (km)', fontsize=11)
+    ax2.set_ylabel('Velocity (m/s)', fontsize=11)
+    ax2.set_title('Velocity Profile', fontsize=11)
+    ax2.grid(True, alpha=0.35)
+    ax2.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
+
+    ax3.set_xlabel('Range (km)', fontsize=11)
+    ax3.set_ylabel('Mach number', fontsize=11)
+    ax3.set_title('Mach Profile', fontsize=11)
+    ax3.grid(True, alpha=0.35)
+    ax3.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
+    ax3.axhline(ENGINE_TRANSITION_MACH["T2R"], color='gray', lw=1.0, ls=':', label='T2R transition')
+    ax3.axhline(ENGINE_TRANSITION_MACH["R2S"], color='gray', lw=1.0, ls=':', label='R2S transition')
+    
+    ax4.set_xlabel('Range (km)', fontsize=11)
+    ax4.set_ylabel('Thrust/Drag (N)', fontsize=11)
+    ax4.set_title('Thrust and Drag Profile', fontsize=11)
+    ax4.grid(True, alpha=0.35)
+
+def _finalize_sweep_figure(fig, ax1, ax2, ax3, ax4, a_cruise, save):
+    """Add the secondary Mach axis and a deduplicated figure-level legend."""
+    # Secondary Mach axis on velocity plot
+    ax2b = ax2.twinx()
+    ax2b.set_ylim(np.array(ax2.get_ylim()) / a_cruise)
+    ax2b.set_yticks([0, 1, 2, 3, 4, 5])
+    ax2b.set_yticklabels([f'M {m}' for m in range(6)], fontsize=8)
+    ax2b.set_ylabel('Mach number', fontsize=10)
+
+    # Collect handles from all axes, dedupe by label
+    handles, labels = [], []
+    seen = set()
+    for ax in (ax1, ax2, ax3, ax4):
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            if l == '_nolegend_' or l in seen:
+                continue
+            seen.add(l)
+            handles.append(h)
+            labels.append(l)
+    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, 0), ncol=4)
+
+    plt.tight_layout()
+    fig.subplots_adjust(bottom=0.15)
+
+    if save:
+        plt.savefig('mission_profile.png', dpi=300, bbox_inches='tight')
+
+
+def plot_mission_profile(gammas, h_cruise, acc_tot=0.15*9.81, total_range=9500e3, x_sample=-1, save=False, show=True):
+
+    gammas_is_seq   = isinstance(gammas,   (list, np.ndarray))
+    h_cruise_is_seq = isinstance(h_cruise, (list, np.ndarray))
+
+    # ── Both swept → sensitivity study, no plot ───────────────────────────────
+    if gammas_is_seq and h_cruise_is_seq:
+        run_sensitivity_study(gammas, h_cruise, acc_tot, total_range, x_sample)
+        warn.warn("No plot generated for sensitivity study with respect to both gamma and h_cruise. "
+                  "Results saved to 'sensitivity_study_results.csv'.")
+        return
+
+    # ── Sweep over gamma (fixed h_cruise) or over h_cruise (fixed gamma) ──────
+    if gammas_is_seq or h_cruise_is_seq:
+        sweep_values = gammas if gammas_is_seq else h_cruise
+        n = len(sweep_values)
         blue_shades = plt.cm.Blues(np.linspace(0.4, 0.9, n))
         red_shades  = plt.cm.Reds (np.linspace(0.4, 0.9, n))
 
-        # Marker styles for the two key events
-        MARKER_H   = dict(marker='^', s=70, zorder=5)   # cruise height reached
-        MARKER_M5  = dict(marker='*', s=120, zorder=5)  # M=5 reached
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 10))
+        if gammas_is_seq:
+            fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise at {h_cruise/1e3:.1f} km',
+                         fontsize=13, fontweight='bold')
+        else:
+            fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise gamma {gammas:.1f} degrees',
+                         fontsize=13, fontweight='bold')
 
-        # ── Figure ────────────────────────────────────────────────────────────────────
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise at {h_cruise/1e3:.1f} km',
-                    fontsize=13, fontweight='bold')
+        a_cruise = None
+        for i, val in enumerate(sweep_values):
+            if gammas_is_seq:
+                g, h, lbl = val, h_cruise, f'γ = {val:.1f}°'
+            else:
+                g, h, lbl = gammas, val, f'h_cruise = {val/1e3:.0f} km'
+                
+                
 
-        # Track whether we've already added the markup labels to the legend
-        _legend_h_added  = False
-        _legend_m5_added = False
+            a_cruise = _plot_one_profile(
+                ax1, ax2, ax3, ax4, g, h, acc_tot, x_sample,
+                color_ascent=blue_shades[i], color_main=red_shades[i], label=lbl,
+                show_h_marker=True,  h_marker_label=(i == 0),
+                show_m5_marker=True, m5_marker_label=(i == 0),
+            )
 
-        for i, gamma in enumerate(gammas):
-            dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, dv_y_to_cruise, dv_x_to_cruise, V_cruise, a_cruise, h_sample, v_sample, density_sample, a_x_descent, a_y_descent, x_descent = compute_flight_profile(gamma,h_cruise,acc_tot,x_sample)
-        
-            
-            lbl = f'γ = {gamma:.1f}°'
-            # ── Altitude plot ──────────────────────────────────────────────────
-            ax1.plot(km([0, dx_to_cruise]),
-                        km([0, h_cruise]),
-                        color=blue_shades[i], lw=1.8, label=lbl)
-            ax1.plot(km([dx_to_cruise,
-                            cruise_cond_end_x,
-                            cruise_cond_end_x+x_descent]),
-                        km([h_cruise, h_cruise, 0]),
-                        color=red_shades[i], lw=1.8)
-
-            # ▲ Cruise-height marker
-            mkw_h = dict(color=red_shades[i], **MARKER_H,
-                            label='Cruise height reached' if not _legend_h_added else '_nolegend_')
-            ax1.scatter(km(dx_to_cruise), km(h_cruise), **mkw_h)
-            
-            # ★ M=5 marker
-            mkw_m5 = dict(color=red_shades[i], **MARKER_M5,
-                            label='M = 5 reached' if not _legend_m5_added else '_nolegend_')
-            ax1.scatter(km(cruise_cond_start_x), km(h_cruise), **mkw_m5)
-            
-            # ── Velocity plot ──────────────────────────────────────────────────
-            _acc_x = acc_tot * np.cos(np.radians(gamma))
-            x_asc = np.linspace(0, dx_to_cruise, 200)
-            ax2.plot(km(x_asc), acc_tot * np.sqrt(2 * x_asc / _acc_x),
-                        color=blue_shades[i], lw=1.8, label=lbl)
-            v_top = np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
-            ax2.plot(km([dx_to_cruise, dx_to_cruise]), [v_top, dv_x_to_cruise],
-                        color=red_shades[i], lw=1.2, ls='--')
-            x_hacc = np.linspace(dx_to_cruise, cruise_cond_start_x, 200)
-            ax2.plot(km(x_hacc), np.sqrt(2 * acc_tot * (x_hacc - dx_to_cruise) + dv_x_to_cruise**2),
-                        color=red_shades[i], lw=1.8)
-            ax2.plot(km([cruise_cond_start_x, cruise_cond_end_x, cruise_cond_end_x+x_descent]),
-                        [V_cruise, V_cruise, 0],
-                        color=red_shades[i], lw=1.8)
-
-            ax2.scatter(km(dx_to_cruise), np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2), **dict(color=red_shades[i], **MARKER_H,
-                        label='Cruise height reached' if not _legend_h_added else '_nolegend_'))
-            
-            ax2.scatter(km(cruise_cond_start_x), V_cruise, **dict(color=red_shades[i], **MARKER_M5,
-                        label='M = 5 reached' if not _legend_m5_added else '_nolegend_'))
-            
-            ax1.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range' )
-            ax2.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
-            
-            if x_sample >= 0:
-                ax2.scatter(km(x_sample), v_sample, color='purple', marker='X', s=100, zorder=5, label='Sample point')
-                ax1.scatter(km(x_sample), km(h_sample), color='purple', marker='X', s=100, zorder=5)  # same sample point on altitude plot
-                print(f"Sample point at x={x_sample} m: altitude={h_sample} m, velocity={v_sample} m/s, density={density_sample} kg/m³")
-            
-            _legend_h_added  = True
-            _legend_m5_added = True
-
-        # ── Altitude plot: shared decorations ────────────────────────────────────────
-        ax1.set_xlabel('Range (km)', fontsize=11)
-        ax1.set_ylabel('Altitude (km)', fontsize=11)
-        ax1.set_title('Altitude Profile', fontsize=11)
-        ax1.grid(True, alpha=0.35)
-        ax1.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
-            
-
-
-        # ── Velocity plot: shared decorations ────────────────────────────────────────
-        ax2.set_xlabel('Range (km)', fontsize=11)
-        ax2.set_ylabel('Velocity (m/s)', fontsize=11)
-        ax2.set_title('Velocity Profile', fontsize=11)
-        ax2.grid(True, alpha=0.35)
-        ax2.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range' )
-            
-
-        # Secondary Mach axis
-        ax2b = ax2.twinx()
-        ax2b.set_ylim(np.array(ax2.get_ylim()) / a_cruise)
-        ax2b.set_yticks([0, 1, 2, 3, 4, 5])
-        ax2b.set_yticklabels([f'M {m}' for m in range(6)], fontsize=8)
-        ax2b.set_ylabel('Mach number', fontsize=10)
-
-        # collect handles from both axes, deduplicate by label
-        handles, labels = [], []
-        seen = set()
-        for ax in (ax1, ax2):
-            for h, l in zip(*ax.get_legend_handles_labels()):
-                if l not in seen:
-                    seen.add(l)
-                    handles.append(h)
-                    labels.append(l)
-
-        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, 0), ncol=4)
-        plt.tight_layout()
-        fig.subplots_adjust(bottom=0.15)
-
-        if save:
-            plt.savefig('mission_profile.png', dpi=300, bbox_inches='tight')
-        
-        if show: 
-            plt.show()
-    
-
-    elif isinstance(h_cruise, (list, np.ndarray)): # h_cruise sensitivity study
-
-        # ── Colour ramps ──────────────────────────────────────────────────────────────
-        n           = len(h_cruise)
-        blue_shades = plt.cm.Blues(np.linspace(0.4, 0.9, n))
-        red_shades  = plt.cm.Reds (np.linspace(0.4, 0.9, n))
-
-        # Marker styles for the two key events
-        MARKER_H   = dict(marker='^', s=70, zorder=5)   # cruise height reached
-        MARKER_M5  = dict(marker='*', s=120, zorder=5)  # M=5 reached
-
-        # ── Figure ────────────────────────────────────────────────────────────────────
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise gamma {gammas:.1f} degrees',
-                    fontsize=13, fontweight='bold')
-
-        # Track whether we've already added the markup labels to the legend
-        _legend_h_added  = False
-        _legend_m5_added = False
-
-        for i, h in enumerate(h_cruise):
-            lbl = f'h_cruise = {h/1e3:.0f} km'
-            dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, dv_y_to_cruise, dv_x_to_cruise, V_cruise, a_cruise, h_sample, v_sample, density_sample, a_x_descent, a_y_descent, x_descent = compute_flight_profile(gammas, h, acc_tot, x_sample)
-            print(f"range for heigh {h/1e3:.0f} km: {(cruise_cond_end_x-cruise_cond_start_x)/1e3:.0f} km")
-            input("Press Enter to continue...")
-           
-            # ── Altitude plot ──────────────────────────────────────────────────
-            ax1.plot(km([0, dx_to_cruise]),
-                        km([0, h]),
-                        color=blue_shades[i], lw=1.8, label=lbl)
-            ax1.plot(km([dx_to_cruise,
-                            cruise_cond_end_x,
-                            cruise_cond_end_x+x_descent]),
-                        km([h, h, 0]),
-                        color=red_shades[i], lw=1.8)
-
-            # ▲ Cruise-height marker
-            mkw_h = dict(color=red_shades[i], **MARKER_H,
-                            label='Cruise height reached' if not _legend_h_added else '_nolegend_')
-            ax1.scatter(km(dx_to_cruise), km(h), **mkw_h)
-
-            # ★ M=5 marker
-            mkw_m5 = dict(color=red_shades[i], **MARKER_M5,
-                            label='M = 5 reached' if not _legend_m5_added else '_nolegend_')
-            ax1.scatter(km(cruise_cond_start_x), km(h), **mkw_m5)
-
-            # ── Velocity plot ──────────────────────────────────────────────────
-            _acc_x = acc_tot * np.cos(np.radians(gammas))
-            x_asc = np.linspace(0, dx_to_cruise, 200)
-            ax2.plot(km(x_asc), acc_tot * np.sqrt(2 * x_asc / _acc_x),
-                        color=blue_shades[i], lw=1.8, label=lbl)
-            v_top = np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
-            ax2.plot(km([dx_to_cruise, dx_to_cruise]), [v_top, dv_x_to_cruise],
-                        color=red_shades[i], lw=1.2, ls='--')
-            x_hacc = np.linspace(dx_to_cruise, cruise_cond_start_x, 200)
-            ax2.plot(km(x_hacc), np.sqrt(2 * acc_tot * (x_hacc - dx_to_cruise) + dv_x_to_cruise**2),
-                        color=red_shades[i], lw=1.8)
-            ax2.plot(km([cruise_cond_start_x, cruise_cond_end_x, cruise_cond_end_x+x_descent]),
-                        [V_cruise, V_cruise, 0],
-                        color=red_shades[i], lw=1.8)
-
-            ax2.scatter(km(dx_to_cruise), np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2), **dict(color=red_shades[i], **MARKER_H,
-                        label='Cruise height reached' if not _legend_h_added else '_nolegend_'))
-
-            ax2.scatter(km(cruise_cond_start_x), V_cruise, **dict(color=red_shades[i], **MARKER_M5,
-                        label='M = 5 reached' if not _legend_m5_added else '_nolegend_'))
-            
-            if x_sample >= 0:
-                ax2.scatter(km(x_sample), v_sample, color='purple', marker='X', s=100, zorder=5, label='Sample point')
-                ax1.scatter(km(x_sample), km(h_sample), color='purple', marker='X', s=100, zorder=5)  # same sample point on altitude plot
-                print(f"Sample point at x={x_sample} m: altitude={h_sample} m, velocity={v_sample} m/s, density={density_sample} kg/m³")
-
-            _legend_h_added  = True
-            _legend_m5_added = True
-
-        # ── Altitude plot: shared decorations ────────────────────────────────────────
-        ax1.set_xlabel('Range (km)', fontsize=11)
-        ax1.set_ylabel('Altitude (km)', fontsize=11)
-        ax1.set_title('Altitude Profile', fontsize=11)
-        ax1.grid(True, alpha=0.35)
-        ax1.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
-            
-
-        # ── Velocity plot: shared decorations ────────────────────────────────────────
-        ax2.set_xlabel('Range (km)', fontsize=11)
-        ax2.set_ylabel('Velocity (m/s)', fontsize=11)
-        ax2.set_title('Velocity Profile', fontsize=11)
-        ax2.grid(True, alpha=0.35)
-        ax2.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range' )
-            
-
-        # Secondary Mach axis
-        ax2b = ax2.twinx()
-        ax2b.set_ylim(np.array(ax2.get_ylim()) / a_cruise)
-        ax2b.set_yticks([0, 1, 2, 3, 4, 5])
-        ax2b.set_yticklabels([f'M {m}' for m in range(6)], fontsize=8)
-        ax2b.set_ylabel('Mach number', fontsize=10)
-
-        # collect handles from both axes, deduplicate by label
-        handles, labels = [], []
-        seen = set()
-        for ax in (ax1, ax2):
-            for h, l in zip(*ax.get_legend_handles_labels()):
-                if l not in seen:
-                    seen.add(l)
-                    handles.append(h)
-                    labels.append(l)
-
-        fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(0.5, 0), ncol=4)
-        plt.tight_layout()
-        fig.subplots_adjust(bottom=0.15)
-
-        if save:
-            plt.savefig('mission_profile.png', dpi=300, bbox_inches='tight')
+        _decorate_axes(ax1, ax2, ax3, ax4, total_range)
+        _finalize_sweep_figure(fig, ax1, ax2, ax3, ax4, a_cruise, save)
 
         if show:
             plt.show()
-    
+        return
 
-    else:
-        dx_to_cruise, cruise_cond_start_x, cruise_cond_end_x, dv_y_to_cruise, dv_x_to_cruise, V_cruise, a_cruise, h_sample, v_sample, density_sample, a_x_descent, a_y_descent, x_descent = compute_flight_profile(gammas, h_cruise, acc_tot, x_sample)
-        
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise at {h_cruise/1e3:.0f} km',
-                    fontsize=13, fontweight='bold')
-        ax1.plot(km([0, dx_to_cruise]),
-                    km([0, h_cruise]),
-                    color='blue', lw=1.8, label='Ascent to cruise height')
-        ax1.plot(km([dx_to_cruise,
-                        cruise_cond_start_x,
-                        cruise_cond_end_x,
-                        cruise_cond_end_x+x_descent]),
-                    km([h_cruise, h_cruise, h_cruise, 0]),
-                    color='red', lw=1.8, label='Horizontal acceleration to M=5 and cruise')
-        ax1.scatter(km(cruise_cond_start_x), km(h_cruise), color='red', marker='*', s=120, zorder=5, label='M = 5 reached')
-        ax1.set_xlabel('Range (km)', fontsize=11)
-        ax1.set_ylabel('Altitude (km)', fontsize=11)
-        ax1.set_title('Altitude Profile', fontsize=11)
-        ax1.grid(True, alpha=0.35)
-        ax1.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
-            
+    # ── Single scalar case ────────────────────────────────────────────────────
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(2, 2, figsize=(20, 6))
+    fig.suptitle(f'Hypersonic Mission Profile  —  M5 Cruise at {h_cruise/1e3:.0f} km',
+                 fontsize=13, fontweight='bold')
 
-        _acc_x = acc_tot * np.cos(np.radians(gammas))
-        x_asc = np.linspace(0, dx_to_cruise, 200)
-        ax2.plot(km(x_asc), acc_tot * np.sqrt(2 * x_asc / _acc_x), color='blue', lw=1.8, label='Ascent to cruise height')
-        v_top = np.sqrt(dv_x_to_cruise**2 + dv_y_to_cruise**2)
-        ax2.plot(km([dx_to_cruise, dx_to_cruise]), [v_top, dv_x_to_cruise], color='red', lw=1.2, ls='--')
-        x_hacc = np.linspace(dx_to_cruise, cruise_cond_start_x, 200)
-        ax2.plot(km(x_hacc), np.sqrt(2 * acc_tot * (x_hacc - dx_to_cruise) + dv_x_to_cruise**2),
-                    color='red', lw=1.8, label='Horizontal acceleration to M=5 and cruise')
-        ax2.plot(km([cruise_cond_start_x, cruise_cond_end_x, cruise_cond_end_x+x_descent]),
-                    [V_cruise, V_cruise, 0], color='red', lw=1.8)
-        ax2.scatter(km(cruise_cond_start_x), V_cruise, color='red', marker='*', s=120, zorder=5, label='M = 5 reached')
-        ax2.set_xlabel('Range (km)', fontsize=11)
-        ax2.set_ylabel('Velocity (m/s)', fontsize=11)
-        ax2.set_title('Velocity Profile', fontsize=11)
-        ax2.grid(True, alpha=0.35)
-        ax2.axvline(km(total_range), color='black', lw=1.2, ls='--', label='Minimum required range')
-            
+    _plot_one_profile(
+        ax1, ax2, ax3, ax4, gammas, h_cruise, acc_tot, x_sample,
+        color_ascent='blue', color_main='red',
+        label='Ascent to cruise height',
+        main_label='Horizontal acceleration to M=5 and cruise',
+        show_h_marker=False,
+        show_m5_marker=True, m5_marker_label=True,
+    )
 
-        if x_sample >= 0:
-            ax2.scatter(km(x_sample), v_sample, color='purple', marker='X', s=100, zorder=5, label='Sample point')
-            ax1.scatter(km(x_sample), km(h_sample), color='purple', marker='X', s=100, zorder=5)  # same sample point on altitude plot
-            print(f"Sample point at x={x_sample} m: altitude={h_sample} m, velocity={v_sample} m/s, density={density_sample} kg/m³")
+    _decorate_axes(ax1, ax2, ax3, ax4, total_range)
 
-        if save:
-            plt.savefig('mission_profile.png', dpi=300, bbox_inches='tight')
+    if save:
+        plt.savefig('mission_profile.png', dpi=300, bbox_inches='tight')
 
-        if show:
-            plt.show()
+    if show:
+        plt.show()
+
 
 def analyse_descent(end_cruise,h_cruise, v_cruise, acc_tot=0.15*9.81, total_range=9500e3):
 
@@ -382,7 +389,7 @@ def analyse_descent(end_cruise,h_cruise, v_cruise, acc_tot=0.15*9.81, total_rang
     
     a_x_descent = -v_cruise**2/2/(total_range - end_cruise)
     t_descent = v_cruise / -a_x_descent
-    a_y_descent = h_cruise/(0.5*t_descent**2)
+    a_y_descent = h_cruise / 0.5/(t_descent / 2)**2
 
     a_descent = np.sqrt(a_x_descent**2 + a_y_descent**2)
 
@@ -390,8 +397,7 @@ def analyse_descent(end_cruise,h_cruise, v_cruise, acc_tot=0.15*9.81, total_rang
         warn.warn(f"Descent acceleration {a_descent:.2f} m/s² exceeds comfortable acceleration {acc_tot} m/s². Descent may not be feasible within the given range.\n")
 
         a_x_descent, a_y_descent, x_descent, _ = find_feasible_descent_acceleration(h_cruise, v_cruise, acc_tot)
-        print(f"Total acceleration for descent: {np.sqrt(a_x_descent**2 + a_y_descent**2)} m/s²")
-        print(f"New range {x_descent+end_cruise:.2f} m\n")
+        
 
      
         return a_x_descent, a_y_descent, x_descent
