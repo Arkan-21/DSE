@@ -1341,14 +1341,6 @@ def find_feasible_descent_acceleration(
 # Run
 # =============================================================================
 
-# =============================================================================
-# Updated mission profile segment builder
-# =============================================================================
-
-# Drop-in helper for Geplakte code (4).py
-# Paste this after find_feasible_descent_acceleration(...) and before `if __name__ == "__main__":`.
-# It uses the same MissionSegment, mach_to_velocity, thrust_from_mach_altitude,
-# altitude_for_mach_at_dynamic_pressure and analyse_descent functions already in your sizing script.
 
 ENGINE_TRANSITION_MACH = {"T2R": 2.5, "R2S": 5.0}
 
