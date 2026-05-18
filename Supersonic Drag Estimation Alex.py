@@ -9,9 +9,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- 1. Input Data & Constanten ---
-W_TOG = 111389.645     # Massa (kg)
-S_PLAN = 425.682       # Vleugeloppervlak (m2)
-S_WET = 1188.937       # Nat oppervlak (m2)
+W_TOG = 90_000     # Massa (kg)
+S_PLAN = 350.0       # Vleugeloppervlak (m2)
+S_WET = 1000.0       # Nat oppervlak (m2)
 MAC = 21.0             # Gemiddelde koorde (m)
 IF = 1.05              # Interference factor (+5%)
 ACCEL_G = 0.15         # Doelversnelling (g)

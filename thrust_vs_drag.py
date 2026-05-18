@@ -681,6 +681,16 @@ class Ramjet:
     CF_DEFAULT = 0.003  # skin-friction coefficient
  
     Q_H2_HHV   = 141.8e6  # J/kg  (informational only)
+
+    # ── Fixed-capture-area ramjet sizing ──────────────────────────────────
+    # The ramjet inlet is now sized at a DESIGN point.  Existing calls that
+    # pass m_air to inlet_properties now interpret that value as the DESIGN
+    # mass flow at this point; off-design mass flow is then calculated from
+    # the fixed capture area: mdot = rho_inf * V_inf * A0_design.
+    DESIGN_MACH      = 4.0
+    DESIGN_ALTITUDE  = 25_000.0   # m
+    DESIGN_MDOT_AIR  = 200.0      # kg/s per engine fallback
+    USE_FIXED_CAPTURE_AREA = True
  
     def __init__(self):
         self.air        = AirProperties()
@@ -710,7 +720,79 @@ class Ramjet:
     # =====================================================================
     # Section 0 — Freestream / inlet capture
     # =====================================================================
-    def inlet_properties(self, h, Ma, m_air):
+    def design_capture_area(
+        self,
+        m_air_design=None,
+        h_design=None,
+        Ma_design=None,
+    ):
+        """
+        Fixed ramjet inlet capture area from a design point.
+
+        Default design point:
+            M_design = 4.0
+            h_design = 25 km
+            m_air_design = DESIGN_MDOT_AIR
+
+        This mirrors the turbojet design/off-design logic:
+            design point  -> choose mdot, calculate area
+            off-design    -> keep area fixed, calculate mdot
+        """
+        h_d = self.DESIGN_ALTITUDE if h_design is None else float(h_design)
+        M_d = self.DESIGN_MACH if Ma_design is None else float(Ma_design)
+        mdot_d = self.DESIGN_MDOT_AIR if m_air_design is None else float(m_air_design)
+
+        T_d = Atmosphere.T(h_d)
+        rho_d = Atmosphere.rho(h_d)
+        Y_air = self._air_Y()
+        W_d = self.mixture.W_mix(Y_air)
+        R_d = self.mixture.R_UNIVERSAL / W_d
+        gamma_d = self.mixture.gamma_mix(Y_air, T_d)
+        a_d = np.sqrt(gamma_d * R_d * T_d)
+        V_d = M_d * a_d
+
+        if V_d <= 0 or rho_d <= 0:
+            raise ValueError("Invalid design-point atmosphere or velocity for capture-area sizing.")
+
+        return mdot_d / (rho_d * V_d)
+
+    def mass_flow_from_capture_area(self, h, Ma, A0_capture):
+        """Off-design air mass flow through a fixed capture area."""
+        T0 = Atmosphere.T(h)
+        rho0 = Atmosphere.rho(h)
+        Y_air = self._air_Y()
+        W0 = self.mixture.W_mix(Y_air)
+        R0 = self.mixture.R_UNIVERSAL / W0
+        gamma0 = self.mixture.gamma_mix(Y_air, T0)
+        a0 = np.sqrt(gamma0 * R0 * T0)
+        V0 = Ma * a0
+        return rho0 * V0 * A0_capture
+
+    def inlet_properties(
+        self,
+        h,
+        Ma,
+        m_air=None,
+        *,
+        use_fixed_capture_area=None,
+        A0_capture=None,
+        m_air_design=None,
+        h_design=None,
+        Ma_design=None,
+    ):
+        """
+        Section 0 — freestream / inlet capture.
+
+        By default this now uses a fixed inlet capture area sized at:
+            M = 4.0, h = 25 km
+
+        Meaning of m_air:
+        - if use_fixed_capture_area=True:  m_air is the DESIGN mass flow used
+          to size A0_design. Actual off-design m_air is calculated from
+          rho_inf * V_inf * A0_design.
+        - if use_fixed_capture_area=False: m_air is the actual mass flow and
+          A0 is recalculated at every flight condition, matching the old code.
+        """
         T0   = Atmosphere.T(h)
         P0   = Atmosphere.P(h)
         rho0 = Atmosphere.rho(h)
@@ -723,7 +805,33 @@ class Ramjet:
  
         a0  = np.sqrt(gamma0 * R0 * T0)
         V0  = Ma * a0
-        A0  = m_air / (rho0 * V0)
+
+        if use_fixed_capture_area is None:
+            use_fixed_capture_area = self.USE_FIXED_CAPTURE_AREA
+
+        if use_fixed_capture_area:
+            # Preserve old call style: inlet_properties(..., m_air=300)
+            # now means "size the fixed capture area for 300 kg/s at the
+            # ramjet design point", then compute actual mdot at (h, Ma).
+            if m_air_design is None:
+                m_air_design = self.DESIGN_MDOT_AIR if m_air is None else float(m_air)
+            if A0_capture is None:
+                A0 = self.design_capture_area(
+                    m_air_design=m_air_design,
+                    h_design=h_design,
+                    Ma_design=Ma_design,
+                )
+            else:
+                A0 = float(A0_capture)
+            m_air_actual = rho0 * V0 * A0
+            mdot_design_for_print = float(m_air_design)
+        else:
+            if m_air is None:
+                m_air_actual = self.DESIGN_MDOT_AIR
+            else:
+                m_air_actual = float(m_air)
+            A0 = m_air_actual / (rho0 * V0)
+            mdot_design_for_print = m_air_actual
  
         h0  = self.mixture.h_mix(Y_air, T0)
         s0  = self.mixture.s_mix(Y_air, T0, P0)
@@ -731,7 +839,11 @@ class Ramjet:
         Tt0 = self.mixture.stagnation_Tt(Y_air, T0, ht0)
         Pt0 = self.mixture.stagnation_Pt(Y_air, T0, Tt0, P0)
  
-        print(f"\n── Inlet  h={h:.0f} m  Ma={Ma:.2f}  ṁ={m_air:.2f} kg/s ──")
+        print(f"\n── Inlet  h={h:.0f} m  Ma={Ma:.2f}  ṁ_air={m_air_actual:.2f} kg/s ──")
+        if use_fixed_capture_area:
+            print(f"  fixed A0={A0:.4f} m² from design point: "
+                  f"M={self.DESIGN_MACH:.2f}, h={self.DESIGN_ALTITUDE/1000:.1f} km, "
+                  f"ṁ_design={mdot_design_for_print:.2f} kg/s")
         print(f"  T0={T0:.1f} K   P0={P0:.0f} Pa   rho0={rho0:.4f} kg/m³")
         print(f"  V0={V0:.1f} m/s   A0={A0:.4f} m²   Tt0={Tt0:.1f} K   Pt0={Pt0:.0f} Pa")
  
@@ -742,7 +854,12 @@ class Ramjet:
             "V": V0,  "V0": V0, "A": A0, "A0": A0,
             "Tt": Tt0, "Tt0": Tt0, "Pt": Pt0, "Pt0": Pt0,
             "h": h0,  "ht": ht0, "s": s0, "st": s0,
-            "Y": Y_air, "mdot": m_air,
+            "Y": Y_air, "mdot": m_air_actual,
+            "fixed_capture_area": bool(use_fixed_capture_area),
+            "A0_capture": A0,
+            "m_air_design": mdot_design_for_print,
+            "design_Mach": self.DESIGN_MACH,
+            "design_altitude_m": self.DESIGN_ALTITUDE,
         }
  
     # =====================================================================
@@ -1513,7 +1630,11 @@ def run_ramjet_single_point(
             "Thrust_kN": thrust_N / 1000.0,
             "Isp_s": isp_s,
             "Ia_Ns_per_kg": ia,
-            "mdot_air_kg_s": float(mdot),
+            "mdot_air_kg_s": float(inp.get("mdot", np.nan)),
+            "mdot_air_design_kg_s": float(mdot),
+            "mdot_air_actual_kg_s": float(inp.get("mdot", np.nan)),
+            "m_air_design_kg_s": float(inp.get("m_air_design", mdot)),
+            "A0_capture_m2": float(inp.get("A0_capture", inp.get("A0", np.nan))),
             "mfuel_kg_s": mfuel,
             "phi": float(phi),
             "Ma_exit": float(sec5.get("Ma5", np.nan)),
@@ -1532,6 +1653,8 @@ def run_ramjet_single_point(
             "Isp_s": np.nan,
             "Ia_Ns_per_kg": np.nan,
             "mdot_air_kg_s": float(mdot),
+            "mdot_air_kg_s": float(mdot),
+            "mdot_air_design_kg_s": float(mdot),
             "mfuel_kg_s": np.nan,
             "phi": float(phi),
             "Ma_exit": np.nan,
@@ -1543,7 +1666,7 @@ def run_ramjet_single_point(
 def run_ramjet_thrust_sweep(
     altitudes_km: np.ndarray | list[float] | None = None,
     mach_values: np.ndarray | list[float] | None = None,
-    mdot: float = 100.0,
+    mdot: float = 200.0,
     phi: float = 0.5,
     suppress_output: bool = True,
 ) -> tuple[np.ndarray, list[dict[str, float | bool | str]]]:
@@ -1622,7 +1745,7 @@ def run_ramjet_thrust_sweep(
 def plot_ramjet_thrust_vs_mach_sweep(
     altitudes_km: np.ndarray | list[float] | None = None,
     mach_values: np.ndarray | list[float] | None = None,
-    mdot: float = 100.0,
+    mdot: float = 200.0,
     phi: float = 0.5,
     suppress_output: bool = True,
     make_contour: bool = True,
@@ -2088,7 +2211,7 @@ def turbo_thrust_at_mach_altitudes(
 def ramjet_cycle_thrust_at_mach_altitudes(
     mach_fixed: float,
     altitude_values_m: np.ndarray,
-    mdot: float = 100.0,
+    mdot: float = 200.0,
     phi: float = 0.5,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
@@ -4056,6 +4179,7 @@ def run_scramjet_single_point(
             "Isp_s": float(perf.get("Isp", np.nan)),
             "Ia_Ns_per_kg": float(perf.get("Ia", np.nan)),
             "mdot_air_kg_s": float(mdot),
+            "mdot_air_design_kg_s": float(mdot),
             "mfuel_kg_s": float(perf.get("mfuel", np.nan)),
             "phi": float(phi),
             "Ma_exit": float(sec5.get("Ma5", np.nan)) if isinstance(sec5, dict) else np.nan,
@@ -4073,7 +4197,10 @@ def run_scramjet_single_point(
             "Thrust_kN": np.nan,
             "Isp_s": np.nan,
             "Ia_Ns_per_kg": np.nan,
-            "mdot_air_kg_s": float(mdot),
+            "mdot_air_design_kg_s": float(mdot),
+            "mdot_air_actual_kg_s": np.nan,
+            "m_air_design_kg_s": float(mdot),
+            "A0_capture_m2": np.nan,
             "mfuel_kg_s": np.nan,
             "phi": float(phi),
             "Ma_exit": np.nan,
@@ -4085,7 +4212,7 @@ def run_scramjet_single_point(
 def ramjet_cycle_thrust_at_mach_altitudes_for_mach5(
     mach_fixed: float,
     altitude_values_m: np.ndarray,
-    mdot: float = 100.0,
+    mdot: float = 200.0,
     phi: float = 0.5,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
@@ -4191,7 +4318,7 @@ def scramjet_cycle_thrust_at_mach_altitudes(
 def plot_ramjet_scramjet_cycle_mach_line(
     altitude_values_m: np.ndarray | None = None,
     mach_fixed: float = 5.0,
-    mdot_ramjet: float = 100.0,
+    mdot_ramjet: float = 200.0,
     mdot_scramjet: float = 100.0,
     phi_ramjet: float = 0.5,
     phi_scramjet: float = 0.5,
@@ -4390,139 +4517,130 @@ def plot_ramjet_scramjet_cycle_mach_line(
 # =============================================================================
 
 # =============================================================================
-# Drag model with variable alpha / AOA
+# Supersonic / hypersonic drag model from the standalone climb-profile script
 # =============================================================================
 #
-# This is based on the drag code you uploaded:
-#   - ISA atmosphere
-#   - C_L(alpha, Mach)
-#   - C_D(Mach, C_L)
-#   - D = q S_ref C_D
+# This replaces the old interpolated C_D polar drag model.
 #
-# Drag is calculated in kN so it can be plotted directly with thrust.
+# The drag is now calculated with the same method as the standalone script you
+# sent:
+#   - ISA-like atmosphere density and temperature
+#   - required lift coefficient from Lift = Weight
+#   - angle of attack inferred from the required lift coefficient
+#   - Newtonian-style wave drag
+#   - Schlichting turbulent skin-friction drag
+#   - total drag = friction drag + wave drag
+#
+# Important:
+#   alpha_deg is kept in a few function signatures only so the existing plotting
+#   functions do not break. The drag model below computes the trimmed/required
+#   alpha from Lift = Weight, so user-supplied alpha_deg is not used.
 # =============================================================================
 
-def isa_temperature_drag(altitude_m: float) -> float:
-    if altitude_m <= 11_000.0:
-        return 288.15 - 0.0065 * altitude_m
-    elif altitude_m <= 20_000.0:
-        return 216.65
-    elif altitude_m <= 32_000.0:
-        return 216.65 + 0.001 * (altitude_m - 20_000.0)
-    else:
-        return 228.65
+# Vehicle / drag constants from the standalone drag script
+W_TOG_DRAG = 90_000.0       # aircraft mass [kg]
+S_PLAN_DRAG = 350.0        # planform/reference area [m^2]
+S_WET_DRAG = 1_000.0         # wetted area [m^2]
+MAC_DRAG = 21.0                # mean aerodynamic chord [m]
+IF_DRAG = 1.05                 # interference factor [-]
+G_DRAG = 9.81                  # gravitational acceleration [m/s^2]
 
 
-def isa_pressure_drag(altitude_m: float) -> float:
-    g0 = 9.80665
-    R = 287.05
+def isa_density_temperature_drag(altitude_m: float) -> tuple[float, float]:
+    """
+    ISA-like atmosphere model from the standalone drag script.
 
-    if altitude_m <= 11_000.0:
-        T0 = 288.15
-        L = -0.0065
-        T = T0 + L * altitude_m
-        return 101325.0 * (T / T0) ** (-g0 / (L * R))
-    elif altitude_m <= 20_000.0:
+    Returns:
+        rho [kg/m^3], T [K]
+    """
+    alt_m = float(altitude_m)
+
+    if alt_m <= 11_000.0:
+        T = 288.15 - 0.0065 * alt_m
+        rho = 1.225 * (T / 288.15) ** 4.256
+    elif alt_m <= 25_000.0:
         T = 216.65
-        p11 = 22632.06
-        return p11 * np.exp(-g0 * (altitude_m - 11_000.0) / (R * T))
-    elif altitude_m <= 32_000.0:
-        T20 = 216.65
-        p20 = 5474.89
-        L = 0.001
-        T = T20 + L * (altitude_m - 20_000.0)
-        return p20 * (T / T20) ** (-g0 / (L * R))
+        rho = 0.3639 * np.exp(-0.000157 * (alt_m - 11_000.0))
     else:
-        T = 228.65
-        p32 = 868.02
-        return p32 * np.exp(-g0 * (altitude_m - 32_000.0) / (R * T))
+        T = 216.65 + 0.003 * (alt_m - 25_000.0)
+        rho = 0.0401 * (T / 216.65) ** -11.388
+
+    return float(rho), float(T)
 
 
-def isa_density_drag(altitude_m: float) -> float:
-    R = 287.05
-    return isa_pressure_drag(altitude_m) / (R * isa_temperature_drag(altitude_m))
+def reynolds_drag(rho: float, velocity: float, temperature: float, chord: float = MAC_DRAG) -> float:
+    """Reynolds number with Sutherland viscosity, matching the standalone script."""
+    mu_0 = 1.7894e-5
+    T_0 = 273.15
+    S_suth = 110.4
+    mu = mu_0 * (temperature / T_0) ** 1.5 * (T_0 + S_suth) / (temperature + S_suth)
+    return (rho * velocity * chord) / mu
 
 
-def speed_of_sound_drag(altitude_m: float) -> float:
-    gamma_air = 1.4
-    R = 287.05
-    return np.sqrt(gamma_air * R * isa_temperature_drag(altitude_m))
+def drag_breakdown_from_mach_altitude(
+    M: float,
+    altitude_m: float,
+    S_ref: float | None = None,
+) -> dict[str, float]:
+    """
+    Drag breakdown using the standalone supersonic/hypersonic estimate.
 
+    The standalone code used S_PLAN for the force calculation.  To keep the
+    old transition-plot API useful, S_ref can still be passed in.  If S_ref is
+    None, S_PLAN_DRAG is used.
 
-def dynamic_pressure_from_mach_altitude_drag(M: float, altitude_m: float) -> float:
-    rho = isa_density_drag(altitude_m)
-    V = M * speed_of_sound_drag(altitude_m)
-    return 0.5 * rho * V**2
+    Returns drag components in N and kN, plus CL and required alpha.
+    """
+    M = float(M)
+    altitude_m = float(altitude_m)
+    S = S_PLAN_DRAG if S_ref is None else float(S_ref)
 
+    rho, T = isa_density_temperature_drag(altitude_m)
+    a = np.sqrt(1.4 * 287.0 * T)
+    V = M * a
+    q = 0.5 * rho * V**2
 
-# C_D = a(M) C_L^2 + b(M) C_L + c(M)
-MACH_POLAR_DATA_DRAG = np.array([0.65, 0.9, 1.1, 1.3, 2.0, 5.37, 7.38, 10.61])
+    # A. Required CL from Lift = Weight
+    cl_needed = (W_TOG_DRAG * G_DRAG) / max(q * S_PLAN_DRAG, 1e-30)
 
-A_POLAR_DATA_DRAG = np.array([0.3804, 0.3418, 0.3459, 0.4006, 0.6049, 1.0314, 1.2753, 1.1948])
-B_POLAR_DATA_DRAG = np.array([-0.0011, 0.0100, 0.0012, 0.0037, 0.0010, 0.0145, 0.0354, 0.0962])
-C_POLAR_DATA_DRAG = np.array([0.0070, 0.0174, 0.0382, 0.0337, 0.0268, 0.0121, 0.0101, 0.0081])
+    # B. Wave drag model from the improved standalone script
+    alpha_rad = np.sqrt((cl_needed ** 0.75) / 2.0)
+    cd_wave = 2.0 * np.sin(alpha_rad) ** 3
 
-A_POLAR_INTERP_DRAG = PchipInterpolator(MACH_POLAR_DATA_DRAG, A_POLAR_DATA_DRAG)
-B_POLAR_INTERP_DRAG = PchipInterpolator(MACH_POLAR_DATA_DRAG, B_POLAR_DATA_DRAG)
-C_POLAR_INTERP_DRAG = PchipInterpolator(MACH_POLAR_DATA_DRAG, C_POLAR_DATA_DRAG)
+    # C. Friction drag from Schlichting turbulent flat-plate relation
+    Re_dyn = reynolds_drag(rho, V, T, MAC_DRAG)
+    cf = 0.455 / (np.log10(Re_dyn) ** 2.58)
+    cd_f = cf * IF_DRAG * (S_WET_DRAG / S_PLAN_DRAG)
 
+    # D. Total drag force.  The coefficient is referenced to S_PLAN_DRAG, but
+    # the old plot function may pass S_ref.  Keeping S here lets you resize the
+    # displayed aircraft reference area without changing the model internals.
+    cd_total = cd_f + cd_wave
+    drag_force_N = q * S * cd_total
+    drag_friction_N = q * S * cd_f
+    drag_wave_N = q * S * cd_wave
 
-# C_L = m(M) alpha_deg + k(M)
-CL_ALPHA_SLOPE_DATA_DRAG = np.array([
-    0.0430,
-    0.0457,
-    0.0428,
-    0.0372,
-    0.0271,
-    0.0167,
-    0.0128,
-    0.0110,
-])
-
-CL_ALPHA_INTERCEPT_DATA_DRAG = np.array([
-    -0.0347,
-    -0.0381,
-    -0.0235,
-    -0.0084,
-    0.0011,
-    -0.0032,
-    -0.0030,
-    -0.0048,
-])
-
-CL_ALPHA_SLOPE_INTERP_DRAG = PchipInterpolator(MACH_POLAR_DATA_DRAG, CL_ALPHA_SLOPE_DATA_DRAG)
-CL_ALPHA_INTERCEPT_INTERP_DRAG = PchipInterpolator(MACH_POLAR_DATA_DRAG, CL_ALPHA_INTERCEPT_DATA_DRAG)
-
-
-def cl_from_mach_alpha_drag(M: float, alpha_deg: float, clamp_mach: bool = True) -> float:
-    M_original = float(M)
-
-    if clamp_mach:
-        M_used = float(np.clip(M_original, MACH_POLAR_DATA_DRAG.min(), MACH_POLAR_DATA_DRAG.max()))
-    else:
-        if M_original < MACH_POLAR_DATA_DRAG.min() or M_original > MACH_POLAR_DATA_DRAG.max():
-            raise ValueError("Mach outside available C_L-alpha range.")
-        M_used = M_original
-
-    slope = float(CL_ALPHA_SLOPE_INTERP_DRAG(M_used))
-    intercept = float(CL_ALPHA_INTERCEPT_INTERP_DRAG(M_used))
-    return slope * alpha_deg + intercept
-
-
-def cd_from_mach_cl_drag(M: float, CL: float, clamp_mach: bool = True) -> float:
-    M_original = float(M)
-
-    if clamp_mach:
-        M_used = float(np.clip(M_original, MACH_POLAR_DATA_DRAG.min(), MACH_POLAR_DATA_DRAG.max()))
-    else:
-        if M_original < MACH_POLAR_DATA_DRAG.min() or M_original > MACH_POLAR_DATA_DRAG.max():
-            raise ValueError("Mach outside available C_D polar range.")
-        M_used = M_original
-
-    a = float(A_POLAR_INTERP_DRAG(M_used))
-    b = float(B_POLAR_INTERP_DRAG(M_used))
-    c = float(C_POLAR_INTERP_DRAG(M_used))
-    return a * CL**2 + b * CL + c
+    return {
+        "rho": float(rho),
+        "T": float(T),
+        "a": float(a),
+        "V": float(V),
+        "q": float(q),
+        "CL": float(cl_needed),
+        "alpha_rad": float(alpha_rad),
+        "alpha_deg": float(np.degrees(alpha_rad)),
+        "Re": float(Re_dyn),
+        "cf": float(cf),
+        "cd_f": float(cd_f),
+        "cd_wave": float(cd_wave),
+        "cd_total": float(cd_total),
+        "D_friction_N": float(drag_friction_N),
+        "D_wave_N": float(drag_wave_N),
+        "D_N": float(drag_force_N),
+        "D_kN": float(drag_force_N / 1000.0),
+        "D_friction_kN": float(drag_friction_N / 1000.0),
+        "D_wave_kN": float(drag_wave_N / 1000.0),
+    }
 
 
 def drag_kN_from_mach_alpha_altitude(
@@ -4533,13 +4651,17 @@ def drag_kN_from_mach_alpha_altitude(
     clamp_mach: bool = True,
 ) -> float:
     """
-    Drag in kN at one Mach, altitude, alpha, and reference area.
+    Drag in kN at one Mach and altitude.
+
+    alpha_deg and clamp_mach are kept only for compatibility with the older
+    plotting calls.  This drag estimate computes the required/trimmed alpha
+    internally from Lift = Weight.
     """
-    CL = cl_from_mach_alpha_drag(M, alpha_deg, clamp_mach=clamp_mach)
-    CD = cd_from_mach_cl_drag(M, CL, clamp_mach=clamp_mach)
-    q = dynamic_pressure_from_mach_altitude_drag(M, altitude_m)
-    D_N = q * S_ref * CD
-    return D_N / 1000.0
+    return drag_breakdown_from_mach_altitude(
+        M=M,
+        altitude_m=altitude_m,
+        S_ref=S_ref,
+    )["D_kN"]
 
 
 def drag_kN_for_alpha_altitude_grid(
@@ -4547,29 +4669,29 @@ def drag_kN_for_alpha_altitude_grid(
     altitude_values_m: np.ndarray,
     alpha_values_deg: list[float] | tuple[float, ...] | np.ndarray,
     S_ref: float,
-) -> dict[float, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
-    Returns drag curves at fixed Mach for multiple alpha values.
+    Returns the trimmed drag curve at fixed Mach over altitude.
 
-    Output:
-        {alpha_deg: drag_kN_array_over_altitude}
+    The returned dictionary also includes the required alpha, friction drag,
+    and wave drag arrays so you can inspect the breakdown.
     """
-    alpha_values_deg = list(alpha_values_deg)
-    drag_by_alpha = {}
+    breakdowns = [
+        drag_breakdown_from_mach_altitude(
+            M=mach_fixed,
+            altitude_m=float(h),
+            S_ref=S_ref,
+        )
+        for h in altitude_values_m
+    ]
 
-    for alpha in alpha_values_deg:
-        drag_by_alpha[float(alpha)] = np.array([
-            drag_kN_from_mach_alpha_altitude(
-                M=mach_fixed,
-                alpha_deg=float(alpha),
-                altitude_m=float(h),
-                S_ref=S_ref,
-                clamp_mach=True,
-            )
-            for h in altitude_values_m
-        ])
-
-    return drag_by_alpha
+    return {
+        "trimmed_total": np.array([b["D_kN"] for b in breakdowns]),
+        "trimmed_friction": np.array([b["D_friction_kN"] for b in breakdowns]),
+        "trimmed_wave": np.array([b["D_wave_kN"] for b in breakdowns]),
+        "required_alpha_deg": np.array([b["alpha_deg"] for b in breakdowns]),
+        "required_CL": np.array([b["CL"] for b in breakdowns]),
+    }
 
 
 def _add_drag_to_fixed_mach_plot(
@@ -4580,55 +4702,80 @@ def _add_drag_to_fixed_mach_plot(
     S_ref: float,
     x_start_offset: float = 0.18,
     x_spacing: float = 0.055,
-) -> dict[float, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
-    Add variable-alpha drag points/lines to an existing fixed-Mach plot.
+    Add the new trimmed drag estimate to an existing fixed-Mach plot.
 
-    Drag is offset to the right of the Mach line so it does not overlap with
-    the engine thrust pair markers.
+    The old plotting code used several fixed alpha curves.  This replacement
+    uses the standalone drag estimate instead, where alpha is calculated from
+    the lift requirement.  Therefore only one total-drag curve is drawn.  The
+    point labels show altitude and the internally calculated required alpha.
     """
-    drag_by_alpha = drag_kN_for_alpha_altitude_grid(
+    drag_data = drag_kN_for_alpha_altitude_grid(
         mach_fixed=mach_fixed,
         altitude_values_m=altitude_values_m,
         alpha_values_deg=alpha_values_deg,
         S_ref=S_ref,
     )
 
-    alpha_values_deg = list(alpha_values_deg)
+    drag_values = drag_data["trimmed_total"]
+    alpha_req = drag_data["required_alpha_deg"]
+    x_drag = np.full_like(altitude_values_m, mach_fixed + x_start_offset, dtype=float)
 
-    # Use a separate marker style for drag.
-    # Each alpha becomes one line through altitude-varying drag points.
-    for j, alpha in enumerate(alpha_values_deg):
-        drag_values = drag_by_alpha[float(alpha)]
-        x_drag = np.full_like(altitude_values_m, mach_fixed + x_start_offset + j * x_spacing, dtype=float)
+    ax.plot(
+        x_drag,
+        drag_values,
+        marker="^",
+        linestyle="-.",
+        linewidth=2.2,
+        markersize=8,
+        alpha=0.95,
+        label="drag, trimmed alpha from L=W",
+        zorder=9,
+    )
 
-        ax.plot(
-            x_drag,
-            drag_values,
-            marker="^",
-            linestyle="-.",
-            linewidth=2.0,
-            markersize=7,
-            alpha=0.9,
-            label=fr"drag, $\alpha$={alpha:g}°",
-            zorder=9,
+    # Optional component markers, slightly offset, so wave/friction breakdown is visible.
+    x_fric = np.full_like(altitude_values_m, mach_fixed + x_start_offset + x_spacing, dtype=float)
+    x_wave = np.full_like(altitude_values_m, mach_fixed + x_start_offset + 2.0 * x_spacing, dtype=float)
+
+    ax.plot(
+        x_fric,
+        drag_data["trimmed_friction"],
+        marker=".",
+        linestyle=":",
+        linewidth=1.4,
+        markersize=7,
+        alpha=0.75,
+        label="friction drag component",
+        zorder=8,
+    )
+    ax.plot(
+        x_wave,
+        drag_data["trimmed_wave"],
+        marker="x",
+        linestyle=":",
+        linewidth=1.4,
+        markersize=7,
+        alpha=0.75,
+        label="wave drag component",
+        zorder=8,
+    )
+
+    # Label only a few total-drag points so the plot does not become unreadable.
+    for idx in [0, len(altitude_values_m)//2, len(altitude_values_m)-1]:
+        h_km = altitude_values_m[idx] / 1000.0
+        ax.text(
+            x_drag[idx] + 0.015,
+            drag_values[idx],
+            f"{h_km:.0f} km\nα={alpha_req[idx]:.1f}°",
+            fontsize=7,
+            va="center",
+            ha="left",
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.65, pad=1.0),
+            zorder=10,
         )
 
-        # Label only a few points so the plot does not become unreadable.
-        for idx in [0, len(altitude_values_m)//2, len(altitude_values_m)-1]:
-            h_km = altitude_values_m[idx] / 1000.0
-            ax.text(
-                x_drag[idx] + 0.015,
-                drag_values[idx],
-                f"{h_km:.0f} km",
-                fontsize=7,
-                va="center",
-                ha="left",
-                bbox=dict(facecolor="white", edgecolor="none", alpha=0.65, pad=1.0),
-                zorder=10,
-            )
-
-    return drag_by_alpha
+    return drag_data
 
 
 # =============================================================================
@@ -4836,6 +4983,157 @@ def plot_turbo_ramjet_mach3_with_drag(
 
 
 # =============================================================================
+# Mach-3 thrust and drag vs altitude plot
+# =============================================================================
+
+def plot_mach3_thrust_drag_vs_altitude(
+    altitude_values_m: np.ndarray | None = None,
+    mach_fixed: float = 3.0,
+    mdot: float = 200.0,
+    phi: float = 0.5,
+    n_ramjet_engines: int = 2,
+    suppress_output: bool = True,
+    clamp_negative_turbo_thrust: bool = True,
+    S_ref: float = 400.0,
+    save_path: str | None = "mach3_thrust_drag_vs_altitude.png",
+) -> dict[str, np.ndarray]:
+    """
+    Plot turbojet thrust, ramjet thrust, and the new supersonic/hypersonic
+    drag estimate versus altitude at one fixed Mach number.
+
+    This replaces the earlier fixed-Mach plot where altitude was shown as
+    offset markers on the Mach axis. Here, altitude is the x-axis directly.
+
+    Drag is calculated with the standalone drag method:
+        CL from Lift = Weight
+        alpha inferred from required CL
+        wave drag + Schlichting skin-friction drag
+    """
+    if altitude_values_m is None:
+        altitude_values_m = np.linspace(12_000.0, 22_000.0, 11)
+
+    altitude_values_m = np.asarray(altitude_values_m, dtype=float)
+    altitude_km = altitude_values_m / 1000.0
+
+    turbo_kN = turbo_thrust_at_mach_altitudes(
+        mach_fixed=mach_fixed,
+        altitude_values_m=altitude_values_m,
+        clamp_negative_thrust=clamp_negative_turbo_thrust,
+    )
+
+    ramjet_kN = ramjet_cycle_thrust_at_mach_altitudes(
+        mach_fixed=mach_fixed,
+        altitude_values_m=altitude_values_m,
+        mdot=mdot,
+        phi=phi,
+        n_ramjet_engines=n_ramjet_engines,
+        suppress_output=suppress_output,
+    )
+
+    drag_breakdowns = [
+        drag_breakdown_from_mach_altitude(
+            M=mach_fixed,
+            altitude_m=float(h),
+            S_ref=S_ref,
+        )
+        for h in altitude_values_m
+    ]
+
+    drag_total_kN = np.array([b["D_kN"] for b in drag_breakdowns])
+    drag_friction_kN = np.array([b["D_friction_kN"] for b in drag_breakdowns])
+    drag_wave_kN = np.array([b["D_wave_kN"] for b in drag_breakdowns])
+    alpha_required_deg = np.array([b["alpha_deg"] for b in drag_breakdowns])
+    CL_required = np.array([b["CL"] for b in drag_breakdowns])
+
+    net_turbo_kN = turbo_kN - drag_total_kN
+    net_ramjet_kN = ramjet_kN - drag_total_kN
+
+    print()
+    print(f"Mach {mach_fixed:g}: thrust and drag vs altitude")
+    print("------------------------------------------------")
+    print(f"Ramjet thrust is total for {n_ramjet_engines} engines.")
+    print(f"Drag uses S_ref = {S_ref:.1f} m^2 and required-alpha trim from L = W.")
+    print(
+        f"{'h [km]':>8s} {'Turbo [kN]':>12s} {'Ramjet [kN]':>12s} "
+        f"{'Drag [kN]':>12s} {'Net turbo':>12s} {'Net ramjet':>12s} "
+        f"{'alpha_req':>12s}"
+    )
+    for h_km, T_turbo, T_ram, D, NT, NR, a_req in zip(
+        altitude_km, turbo_kN, ramjet_kN, drag_total_kN,
+        net_turbo_kN, net_ramjet_kN, alpha_required_deg
+    ):
+        print(
+            f"{h_km:8.2f} {T_turbo:12.3f} {T_ram:12.3f} "
+            f"{D:12.3f} {NT:12.3f} {NR:12.3f} {a_req:12.3f}"
+        )
+
+    fig, ax = plt.subplots(figsize=(11, 7))
+
+    ax.plot(altitude_km, turbo_kN, marker="o", linewidth=2.3,
+            label="Turbojet thrust")
+    ax.plot(altitude_km, ramjet_kN, marker="s", linewidth=2.3,
+            label=f"Ramjet thrust, {n_ramjet_engines} engines")
+    ax.plot(altitude_km, drag_total_kN, marker="^", linestyle="--", linewidth=2.3,
+            label="Total drag")
+    ax.plot(altitude_km, drag_friction_kN, linestyle=":", linewidth=1.7,
+            label="Friction drag")
+    ax.plot(altitude_km, drag_wave_kN, linestyle=":", linewidth=1.7,
+            label="Wave drag")
+
+    # Mark approximate intersections by looking for sign changes.
+    for thrust_curve, name in [(turbo_kN, "turbo"), (ramjet_kN, "ramjet")]:
+        net = thrust_curve - drag_total_kN
+        for i in range(len(net) - 1):
+            if not np.isfinite(net[i]) or not np.isfinite(net[i + 1]):
+                continue
+            if net[i] == 0 or net[i] * net[i + 1] < 0:
+                h0, h1 = altitude_km[i], altitude_km[i + 1]
+                n0, n1 = net[i], net[i + 1]
+                h_cross = h0 - n0 * (h1 - h0) / (n1 - n0)
+                ax.axvline(h_cross, linestyle="-.", linewidth=1.2, alpha=0.7)
+                ax.text(
+                    h_cross,
+                    ax.get_ylim()[1] * 0.92,
+                    f"{name} T=D\n{h_cross:.1f} km",
+                    rotation=90,
+                    va="top",
+                    ha="right",
+                    fontsize=8,
+                )
+
+    ax.set_xlabel("Altitude [km]")
+    ax.set_ylabel("Force [kN]")
+    ax.set_title(
+        f"Mach {mach_fixed:g}: thrust and drag vs altitude\n"
+        f"Drag model: required CL, required alpha, wave + friction drag"
+    )
+    ax.grid(True, alpha=0.35)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+    return {
+        "altitude_m": altitude_values_m,
+        "altitude_km": altitude_km,
+        "mach_fixed": np.full_like(altitude_values_m, mach_fixed, dtype=float),
+        "turbo_cycle_thrust_kN": turbo_kN,
+        "ramjet_cycle_total_thrust_kN": ramjet_kN,
+        "drag_total_kN": drag_total_kN,
+        "drag_friction_kN": drag_friction_kN,
+        "drag_wave_kN": drag_wave_kN,
+        "net_turbo_kN": net_turbo_kN,
+        "net_ramjet_kN": net_ramjet_kN,
+        "required_alpha_deg": alpha_required_deg,
+        "required_CL": CL_required,
+        "S_ref": np.array([S_ref]),
+    }
+
+
+# =============================================================================
 # Mach-5 plot with drag included
 # =============================================================================
 
@@ -5025,50 +5323,23 @@ def plot_ramjet_scramjet_mach5_with_drag(
 
 
 # =============================================================================
-# Run both transition plots with drag
+# Run Mach-3 altitude plot
 # =============================================================================
 
 if __name__ == "__main__":
 
-    # Change these to test different AOA schedules.
-    alpha_values_deg = [0.0, 3.5, 7.5]
+    # Mach 3 transition study: force vs altitude.
     S_ref = 400.0
+    altitude_values_m_mach3 = np.linspace(12_000.0, 22_000.0, 21)
 
-    # -------------------------------------------------------------------------
-    # Plot 1: Mach 3 turbojet/ramjet + drag
-    # -------------------------------------------------------------------------
-    altitude_values_m_mach3 = np.linspace(12_000.0, 22_000.0, 11)
-
-    results_mach3 = plot_turbo_ramjet_mach3_with_drag(
+    results_mach3_altitude = plot_mach3_thrust_drag_vs_altitude(
         altitude_values_m=altitude_values_m_mach3,
         mach_fixed=3.0,
-        mach_min=0.0,
-        mach_max=6.0,
-        n_mach=800,
-        mdot=100.0,
+        mdot=200.0,
         phi=0.5,
         n_ramjet_engines=2,
         suppress_output=True,
         clamp_negative_turbo_thrust=True,
-        alpha_values_deg=alpha_values_deg,
         S_ref=S_ref,
-    )
-
-    # -------------------------------------------------------------------------
-    # Plot 2: Mach 5 ramjet/scramjet + drag
-    # -------------------------------------------------------------------------
-    altitude_values_m_mach5 = np.linspace(22_000.0, 32_000.0, 11)
-
-    results_mach5 = plot_ramjet_scramjet_mach5_with_drag(
-        altitude_values_m=altitude_values_m_mach5,
-        mach_fixed=5.0,
-        mdot_ramjet=100.0,
-        mdot_scramjet=100.0,
-        phi_ramjet=0.5,
-        phi_scramjet=0.5,
-        n_ramjet_engines=2,
-        n_scramjet_engines=1,
-        suppress_output=True,
-        alpha_values_deg=alpha_values_deg,
-        S_ref=S_ref,
+        save_path="mach3_thrust_drag_vs_altitude.png",
     )
