@@ -733,25 +733,25 @@ def plot_converged_istr24_results(results: list[dict[str, float]]):
     all in one figure window.
     """
 
-    istr24_results = [
+    istr21_results = [
         result for result in results
-        if abs(result["input_I_str"] - 24.0) < 1e-6
+        if abs(result["input_I_str"] - 21.0) < 1e-6
     ]
 
-    istr24_results = sorted(istr24_results, key=lambda result: result["tau"])
+    istr24_results = sorted(istr21_results, key=lambda result: result["tau"])
 
-    s_plan = np.array([result["S_plan"] for result in istr24_results])
-    tau    = np.array([result["tau"]    for result in istr24_results])
+    s_plan = np.array([result["S_plan"] for result in istr21_results])
+    tau    = np.array([result["tau"]    for result in istr21_results])
 
-    v_tot  = np.array([result["V_available"] for result in istr24_results])
-    s_wet  = np.array([result["S_wet"]       for result in istr24_results])
-    w_str  = np.array([result["W_str"]       for result in istr24_results])
-    w_fuel = np.array([result["W_fuel"]      for result in istr24_results])
-    togw   = np.array([result["TOGW"]        for result in istr24_results])
-    v_fuel = np.array([result["V_fuel"]      for result in istr24_results])
+    v_tot  = np.array([result["V_available"] for result in istr21_results])
+    s_wet  = np.array([result["S_wet"]       for result in istr21_results])
+    w_str  = np.array([result["W_str"]       for result in istr21_results])
+    w_fuel = np.array([result["W_fuel"]      for result in istr21_results])
+    togw   = np.array([result["TOGW"]        for result in istr21_results])
+    v_fuel = np.array([result["V_fuel"]      for result in istr21_results])
     owe    = np.array([
         result["W_sys"] + result["W_prop"] + result["W_str"]
-        for result in istr24_results
+        for result in istr21_results
     ])
 
     plots = [
@@ -765,7 +765,7 @@ def plot_converged_istr24_results(results: list[dict[str, float]]):
     ]
 
     fig, axes = plt.subplots(3, 3, figsize=(14, 10))
-    fig.suptitle(r"Converged sizing results, $I_{str} = 24$", fontsize=13)
+    fig.suptitle(r"Converged sizing results, $I_{str} = 21$", fontsize=13)
 
     # Flatten so we can index linearly; hide the unused 9th panel
     axes_flat = axes.flatten()
@@ -798,19 +798,79 @@ def plot_converged_istr24_results(results: list[dict[str, float]]):
     plt.tight_layout()
     plt.show()
 
+def plot_converged_istr24_results_individual(results: list[dict[str, float]]):
+    """
+    Plot converged sizing variables versus S_plan for I_str = 24,
+    one figure per variable.
+    """
+
+    istr21_results = [
+        result for result in results
+        if abs(result["input_I_str"] - 21.0) < 1e-6
+    ]
+
+    istr24_results = sorted(istr21_results, key=lambda result: result["tau"])
+
+    s_plan = np.array([result["S_plan"]     for result in istr21_results])
+    tau    = np.array([result["tau"]        for result in istr21_results])
+    v_tot  = np.array([result["V_available"] for result in istr21_results])
+    s_wet  = np.array([result["S_wet"]      for result in istr21_results])
+    w_str  = np.array([result["W_str"]      for result in istr21_results])
+    w_fuel = np.array([result["W_fuel"]     for result in istr21_results])
+    togw   = np.array([result["TOGW"]       for result in istr21_results])
+    v_fuel = np.array([result["V_fuel"]     for result in istr21_results])
+    owe    = np.array([
+        result["W_sys"] + result["W_prop"] + result["W_str"]
+        for result in istr21_results
+    ])
+
+    plots = [
+        ("V_tot",  v_tot,  r"$V_{tot}$ [m³]",  r"$V_{tot}$ vs $S_{plan}$, $I_{str}=21$"),
+        ("S_wet",  s_wet,  r"$S_{wet}$ [m²]",  r"$S_{wet}$ vs $S_{plan}$, $I_{str}=21$"),
+        ("W_str",  w_str,  r"$W_{str}$ [kg]",  r"$W_{str}$ vs $S_{plan}$, $I_{str}=21$"),
+        ("OWE",    owe,    r"OWE [kg]",         r"OWE vs $S_{plan}$, $I_{str}=21$"),
+        ("W_fuel", w_fuel, r"$W_{fuel}$ [kg]", r"$W_{fuel}$ vs $S_{plan}$, $I_{str}=21$"),
+        ("TOGW",   togw,   r"TOGW [kg]",        r"TOGW vs $S_{plan}$, $I_{str}=21$"),
+        ("V_fuel", v_fuel, r"$V_{fuel}$ [m³]", r"$V_{fuel}$ vs $S_{plan}$, $I_{str}=21$"),
+    ]
+
+    for _, values, ylabel, title in plots:
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+
+        ax.plot(s_plan, values, marker="x", linewidth=1.5, color="steelblue")
+
+        for x, y, tau_value in zip(s_plan, values, tau):
+            ax.annotate(
+                rf"$\tau={tau_value:.2f}$",
+                xy=(x, y),
+                xytext=(4, 4),
+                textcoords="offset points",
+                fontsize=9,
+            )
+
+        ax.set_xlabel(r"$S_{plan}$ [m²]", fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.grid(True, linestyle=":", alpha=0.6)
+        ax.tick_params(labelsize=9)
+
+        plt.tight_layout()
+        plt.show()
+
 if __name__ == "__main__":
 
     example = SizingInputs(
         mach=5.0,
         range_value=9_500_000.0,
-        altitude_m=35_000.0,
+        altitude_m=30_000.0,
         w_pay=7_000,
         rho_pay=100.0,
         rho_fuel=70.0,
         eta_v=0.8,
         r_sys=0.16,
         tau_value=0.16,
-        s_plan=900.0,
+        s_plan=500.0,
         i_str=21.0,
         isp=1800.0,
         etw=8,
@@ -842,7 +902,7 @@ if __name__ == "__main__":
     )
 
 
-    plot_converged_istr24_results(results)
+    plot_converged_istr24_results_individual(results)
 
     print("\nTau and I_str sensitivity sweep")
     print("-------------------------------")
