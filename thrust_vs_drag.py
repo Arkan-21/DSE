@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
 from scipy.integrate import solve_ivp
-
+from scipy.interpolate import PchipInterpolator
 
 # Optional NASA CEA — required by combustor_properties4 (per-step equilibrium).
 try:
@@ -1761,44 +1761,280 @@ def plot_ramjet_thrust_vs_mach_sweep(
 # =============================================================================
 
 # =============================================================================
-# Turbojet polynomial model for comparison
+# Turbojet cycle model for comparison
 # =============================================================================
 #
-# The ramjet thrust below comes from the full Ramjet cycle model above.
-# The turbojet thrust is still taken from your polynomial EngineSim-fit model.
+# This replaces the old polynomial EngineSim-fit turbojet thrust with the
+# paper-style off-design turbojet calculation developed earlier in this chat.
+#
+# Design point used here:
+#   M0_DP       = 2.0
+#   altitude_DP = 20 km, using ISA T0 and P0
+#   m0_DP       = 2 * 150 = 300 kg/s
+#   CPR_DP      = 8
+#   Tt4_DP      = 1300 K
+#
+# Units returned by turbo_thrust_curve_vs_mach() and
+# turbo_thrust_at_mach_altitudes() are kN, so the rest of your plotting code can
+# keep using the same calls as before.
 # =============================================================================
 
-from scipy.interpolate import PchipInterpolator
+from dataclasses import dataclass
+from math import sqrt as _sqrt, exp as _exp
+from typing import Dict as _Dict
 
 
-TURBO_THRUST_POLY_DATA = {
-    # altitude_m: (a, b, c)
-    0.0:     (1252.7,  -861.57, 1272.0),
-    5000.0:  (1091.0, -1214.8,  1003.1),
-    10000.0: (787.87, -1088.9,  705.08),
-    15000.0: (439.92, -742.89,  465.0),
-}
+@dataclass(frozen=True)
+class _TurboGas:
+    k: float
+    cp: float
+    R: float
 
 
-_turbo_alts = np.array(sorted(TURBO_THRUST_POLY_DATA.keys()), dtype=float)
+@dataclass(frozen=True)
+class _TurboParams:
+    air: _TurboGas = _TurboGas(k=1.4, cp=1005.0, R=287.0)
+    gas: _TurboGas = _TurboGas(k=1.33, cp=1170.0, R=290.0)
+    cpB: float = 1200.0
+    FHV: float = 43e6
 
-_TURBO_A_INTERP = PchipInterpolator(
-    _turbo_alts,
-    [TURBO_THRUST_POLY_DATA[h][0] for h in _turbo_alts],
-    extrapolate=True,
-)
+    sigma_inlet: float = 0.97
+    sigma_burner: float = 0.98
+    sigma_ab_off: float = 0.975
+    sigma_nozzle: float = 0.96
+    eta_compressor: float = 0.83
+    eta_turbine: float = 0.90
+    eta_burner: float = 0.98
+    eta_mech: float = 0.99
 
-_TURBO_B_INTERP = PchipInterpolator(
-    _turbo_alts,
-    [TURBO_THRUST_POLY_DATA[h][1] for h in _turbo_alts],
-    extrapolate=True,
-)
+    # Updated turbojet design point.
+    M0_DP: float = 2.0
+    altitude_DP_m: float = 20_000.0
 
-_TURBO_C_INTERP = PchipInterpolator(
-    _turbo_alts,
-    [TURBO_THRUST_POLY_DATA[h][2] for h in _turbo_alts],
-    extrapolate=True,
-)
+    # Current sizing from the previous code: two 150 kg/s engines.
+    m0_DP: float = 2 * 150.0
+    CPR_DP: float = 8.0
+    Tt4_DP: float = 1300.0
+
+
+_TP = _TurboParams()
+
+
+def _turbo_isa_atmosphere(altitude_m: float) -> tuple[float, float, float]:
+    """
+    ISA atmosphere from 0 to 32 km.
+    Returns T [K], P [Pa], rho [kg/m^3].
+    """
+    h = float(altitude_m)
+    g0 = 9.80665
+    R = 287.05
+
+    if h <= 11_000.0:
+        T_sl = 288.15
+        P_sl = 101325.0
+        L = -0.0065
+        T = T_sl + L * h
+        P = P_sl * (T / T_sl) ** (-g0 / (L * R))
+    elif h <= 20_000.0:
+        T = 216.65
+        P11 = 22632.06
+        P = P11 * _exp(-g0 * (h - 11_000.0) / (R * T))
+    elif h <= 32_000.0:
+        T20 = 216.65
+        P20 = 5474.89
+        L = 0.001
+        T = T20 + L * (h - 20_000.0)
+        P = P20 * (T / T20) ** (-g0 / (L * R))
+    else:
+        T = 228.65
+        P32 = 868.02
+        P = P32 * _exp(-g0 * (h - 32_000.0) / (R * T))
+
+    rho = P / (R * T)
+    return T, P, rho
+
+
+def _turbo_total_from_static(T: float, p_static: float, M: float, gas: _TurboGas) -> tuple[float, float, float, float]:
+    Tt = T * (1.0 + (gas.k - 1.0) / 2.0 * M**2)
+    Pt = p_static * (1.0 + (gas.k - 1.0) / 2.0 * M**2) ** (gas.k / (gas.k - 1.0))
+    a = _sqrt(gas.k * gas.R * T)
+    V = M * a
+    return Tt, Pt, a, V
+
+
+def _turbo_bcr(gas: _TurboGas) -> float:
+    return ((gas.k + 1.0) / 2.0) ** (gas.k / (gas.k - 1.0))
+
+
+def _turbo_fuel_air_ratio_paper(Tt3: float, Tt4: float, p: _TurboParams = _TP) -> float:
+    return p.cpB * (Tt4 - Tt3) / (p.eta_burner * p.FHV)
+
+
+def _turbo_turbine_min_area_values(m4: float, Tt4: float, Pt4: float, p: _TurboParams = _TP) -> _Dict[str, float]:
+    gas = p.gas
+    B = _turbo_bcr(gas)
+    T4_min = Tt4 * 2.0 / (gas.k + 1.0)
+    P4_min = p.sigma_burner * Pt4 / B
+    rho4_min = P4_min / (gas.R * T4_min)
+    c4_min = _sqrt(gas.k * gas.R * T4_min)
+    A4_min = m4 / (rho4_min * c4_min)
+    return {"T4_min": T4_min, "P4_min": P4_min, "rho4_min": rho4_min, "c4_min": c4_min, "A4_min": A4_min}
+
+
+def _turbo_nozzle_choked_values(m9: float, Tt9: float, Pt9: float, P0: float, p: _TurboParams = _TP) -> _Dict[str, float]:
+    gas = p.gas
+    B = _turbo_bcr(gas)
+    P9_IE = Pt9 / B
+    T9_IE = Tt9 * (P9_IE / Pt9) ** ((gas.k - 1.0) / gas.k)
+    M9_IE = _sqrt(max(0.0, (Tt9 / T9_IE - 1.0) * 2.0 / (gas.k - 1.0)))
+    a9_IE = _sqrt(gas.k * gas.R * T9_IE)
+    V9_IE = M9_IE * a9_IE
+    rho9_IE = P9_IE / (gas.R * T9_IE)
+    A9_min = m9 / (rho9_IE * V9_IE)
+    V9e = V9_IE + (P9_IE - P0) / (rho9_IE * V9_IE)
+    T9e = Tt9 - V9e**2 / (2.0 * gas.cp)
+    return {
+        "Bcr": B,
+        "P9_IE": P9_IE,
+        "T9_IE": T9_IE,
+        "M9_IE": M9_IE,
+        "a9_IE": a9_IE,
+        "V9_IE": V9_IE,
+        "rho9_IE": rho9_IE,
+        "A9_min": A9_min,
+        "V9e": V9e,
+        "T9e": T9e,
+        "P9e": P0,
+    }
+
+
+def _turbo_design_point(p: _TurboParams = _TP) -> _Dict[str, float]:
+    T0_DP, P0_DP, _ = _turbo_isa_atmosphere(p.altitude_DP_m)
+    air, gas = p.air, p.gas
+
+    out: _Dict[str, float] = {
+        "M0": p.M0_DP,
+        "altitude_m": p.altitude_DP_m,
+        "T0": T0_DP,
+        "P0": P0_DP,
+        "m0": p.m0_DP,
+        "CPR": p.CPR_DP,
+        "Tt4": p.Tt4_DP,
+    }
+
+    Tt0, Pt0, a0, V0 = _turbo_total_from_static(T0_DP, P0_DP, p.M0_DP, air)
+    out.update(Tt0=Tt0, Pt0=Pt0, a0=a0, V0=V0)
+
+    Tt2 = Tt0
+    Pt2 = p.sigma_inlet * Pt0
+    out.update(Tt2=Tt2, Pt2=Pt2)
+
+    Tt3 = Tt2 * (1.0 + (p.CPR_DP ** ((air.k - 1.0) / air.k) - 1.0) / p.eta_compressor)
+    Pt3 = p.CPR_DP * Pt2
+    WC = air.cp * (Tt3 - Tt2)
+    out.update(Tt3=Tt3, Pt3=Pt3, WC=WC)
+
+    fB = _turbo_fuel_air_ratio_paper(Tt3, p.Tt4_DP, p)
+    mfB = p.m0_DP * fB
+    Pt4 = p.sigma_burner * Pt3
+    m4 = p.m0_DP * (1.0 + fB)
+    out.update(fB=fB, mfB=mfB, Pt4=Pt4, m4=m4)
+
+    out.update(_turbo_turbine_min_area_values(m4, p.Tt4_DP, Pt4, p))
+
+    Tt5 = p.Tt4_DP - WC / ((1.0 + fB) * gas.cp * p.eta_mech)
+    TPR = (1.0 - (1.0 - Tt5 / p.Tt4_DP) / p.eta_turbine) ** (-gas.k / (gas.k - 1.0))
+    Pt5 = Pt4 / TPR
+    out.update(Tt5=Tt5, Pt5=Pt5, TPR=TPR)
+
+    Tt7 = Tt5
+    Pt7 = p.sigma_ab_off * Pt5
+    Tt9 = Tt7
+    Pt9 = p.sigma_nozzle * Pt7
+    out.update(Tt7=Tt7, Pt7=Pt7, Tt9=Tt9, Pt9=Pt9)
+
+    out.update(_turbo_nozzle_choked_values(m4, Tt9, Pt9, P0_DP, p))
+
+    thrust = p.m0_DP * ((1.0 + fB) * out["V9e"] - V0)
+    out.update(thrust_N=thrust, thrust_kN=thrust / 1000.0)
+    return out
+
+
+def _turbo_off_design(M0: float, altitude_m: float, n_ratio: float, dp: _Dict[str, float], p: _TurboParams = _TP) -> _Dict[str, float]:
+    T0, P0, _ = _turbo_isa_atmosphere(altitude_m)
+    air, gas = p.air, p.gas
+    out: _Dict[str, float] = {"M0": M0, "altitude_m": altitude_m, "T0": T0, "P0": P0, "n_ratio": n_ratio}
+
+    Tt0, Pt0, a0, V0 = _turbo_total_from_static(T0, P0, M0, air)
+    out.update(Tt0=Tt0, Pt0=Pt0, a0=a0, V0=V0)
+
+    Tt2 = Tt0
+    Pt2 = p.sigma_inlet * Pt0
+    out.update(Tt2=Tt2, Pt2=Pt2)
+
+    # Paper relation:
+    # n/n_DP = sqrt((Tt4/Tt0) / (Tt4_DP/Tt0_DP))
+    Tt4 = Tt0 * n_ratio**2 * p.Tt4_DP / dp["Tt0"]
+
+    if Tt4 <= Tt2:
+        out.update(valid=False, thrust_N=np.nan, thrust_kN=np.nan)
+        return out
+
+    TPR = dp["TPR"]
+    Tt5 = Tt4 * (1.0 - p.eta_turbine * (1.0 - TPR ** (-(gas.k - 1.0) / gas.k)))
+    WT = gas.cp * (Tt4 - Tt5) * p.eta_mech
+    out.update(Tt4=Tt4, Tt5=Tt5, WT=WT)
+
+    fB = 0.0
+    for _ in range(1, 101):
+        fB_old = fB
+        Tt3 = Tt2 + (1.0 + fB_old) * WT / air.cp
+        fB = _turbo_fuel_air_ratio_paper(Tt3, Tt4, p)
+        if fB <= 0:
+            out.update(valid=False, thrust_N=np.nan, thrust_kN=np.nan)
+            return out
+        if abs(fB - fB_old) / max(abs(fB), 1e-12) < 1e-5:
+            break
+
+    CPR = (1.0 + p.eta_compressor * (Tt3 / Tt2 - 1.0)) ** (air.k / (air.k - 1.0))
+    Pt3 = CPR * Pt2
+    Pt4 = p.sigma_burner * Pt3
+    Pt5 = Pt4 / TPR
+    out.update(Tt3=Tt3, fB=fB, CPR=CPR, Pt3=Pt3, Pt4=Pt4, Pt5=Pt5, TPR=TPR)
+
+    B = _turbo_bcr(gas)
+    T4_min = Tt4 * 2.0 / (gas.k + 1.0)
+    P4_min = p.sigma_burner * Pt4 / B
+    rho4_min = P4_min / (gas.R * T4_min)
+    c4_min = _sqrt(gas.k * gas.R * T4_min)
+
+    A4_min = dp["A4_min"]
+    m4 = A4_min * rho4_min * c4_min
+    m0 = m4 / (1.0 + fB)
+    mf = m0 * fB
+    out.update(T4_min=T4_min, P4_min=P4_min, rho4_min=rho4_min, c4_min=c4_min,
+               A4_min=A4_min, m4=m4, m0=m0, mf=mf)
+
+    Tt7 = Tt5
+    Pt7 = p.sigma_ab_off * Pt5
+    Tt9 = Tt7
+    Pt9 = p.sigma_nozzle * Pt7
+    out.update(Tt7=Tt7, Pt7=Pt7, Tt9=Tt9, Pt9=Pt9)
+
+    P9_critical = Pt9 / _turbo_bcr(gas)
+    if P9_critical < P0:
+        out.update(valid=False, thrust_N=np.nan, thrust_kN=np.nan, P9_IE=P9_critical)
+        return out
+
+    nozzle = _turbo_nozzle_choked_values(m4, Tt9, Pt9, P0, p)
+    out.update(nozzle)
+
+    thrust = m0 * ((1.0 + fB) * out["V9e"] - V0)
+    out.update(valid=True, thrust_N=thrust, thrust_kN=thrust / 1000.0)
+    return out
+
+
+_TURBO_DP = _turbo_design_point(_TP)
 
 
 def turbo_thrust_curve_vs_mach(
@@ -1807,26 +2043,27 @@ def turbo_thrust_curve_vs_mach(
     clamp_negative_thrust: bool = True,
 ) -> np.ndarray:
     """
-    Turbojet thrust curve from the polynomial EngineSim fit.
+    Turbojet thrust curve from the paper-style off-design cycle model.
 
-    NOTE:
-    This returns the same units as the polynomial coefficients.
-    Your coefficients look like kN-scale values, so the plot label uses kN.
+    Returns thrust in kN.
     """
-    altitude_m = float(altitude_m)
+    M_values = np.asarray(mach_values, dtype=float)
+    thrust_kN = []
 
-    a = float(_TURBO_A_INTERP(altitude_m))
-    b = float(_TURBO_B_INTERP(altitude_m))
-    c = float(_TURBO_C_INTERP(altitude_m))
+    for M in M_values:
+        result = _turbo_off_design(
+            M0=float(M),
+            altitude_m=float(altitude_m),
+            n_ratio=1.0,
+            dp=_TURBO_DP,
+            p=_TP,
+        )
+        T = float(result.get("thrust_kN", np.nan))
+        if clamp_negative_thrust and np.isfinite(T):
+            T = max(T, 0.0)
+        thrust_kN.append(T)
 
-    M = np.asarray(mach_values, dtype=float)
-
-    thrust = a * M**2 + b * M + c
-
-    if clamp_negative_thrust:
-        thrust = np.maximum(thrust, 0.0)
-
-    return thrust
+    return np.array(thrust_kN, dtype=float)
 
 
 def turbo_thrust_at_mach_altitudes(
@@ -1836,6 +2073,7 @@ def turbo_thrust_at_mach_altitudes(
 ) -> np.ndarray:
     """
     Turbojet thrust at one fixed Mach number for many altitudes.
+    Returned thrust is in kN.
     """
     return np.array([
         turbo_thrust_curve_vs_mach(
@@ -1844,7 +2082,7 @@ def turbo_thrust_at_mach_altitudes(
             clamp_negative_thrust=clamp_negative_thrust,
         )[0]
         for h in altitude_values_m
-    ])
+    ], dtype=float)
 
 
 def ramjet_cycle_thrust_at_mach_altitudes(
@@ -1959,10 +2197,10 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
     )
 
     print()
-    print(f"Turbo polynomial vs full ramjet-cycle thrust at Mach {mach_fixed:g}")
+    print(f"Turbo cycle vs full ramjet-cycle thrust at Mach {mach_fixed:g}")
     print("----------------------------------------------------------------")
     print(f"Ramjet thrust is total for {n_ramjet_engines} engines.")
-    print(f"{'Altitude [km]':>14s} {'Turbo poly':>16s} {'Ramjet total':>16s} {'Turbo - Ramjet':>18s}")
+    print(f"{'Altitude [km]':>14s} {'Turbo cycle':>16s} {'Ramjet total':>16s} {'Turbo - Ramjet':>18s}")
 
     for h, T_turbo, T_ram in zip(altitude_values_m, turbo_at_mach, ramjet_cycle_at_mach):
         diff = T_turbo - T_ram if np.isfinite(T_ram) else np.nan
@@ -2086,10 +2324,10 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
 
     legend_elements = [
         Line2D([0], [0], color="black", linestyle="-", linewidth=1.8,
-               label="turbo polynomial curve"),
+               label="turbo cycle curve"),
         Line2D([0], [0], marker="o", color="white", markerfacecolor="gray",
                markeredgecolor="black", markersize=9,
-               label=f"turbo polynomial at M={mach_fixed:g}"),
+               label=f"turbo cycle at M={mach_fixed:g}"),
         Line2D([0], [0], marker="s", color="white", markerfacecolor="gray",
                markeredgecolor="black", markersize=9,
                label=f"full ramjet cycle, {n_ramjet_engines} engines, at M={mach_fixed:g}"),
@@ -2110,7 +2348,7 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
     ax.set_xlabel("Mach number [-]")
     ax.set_ylabel("Thrust [kN]")
     ax.set_title(
-        f"Turbojet polynomial curves with full ramjet-cycle thrust points at Mach {mach_fixed:g} ({n_ramjet_engines} ramjets)"
+        f"Turbojet cycle curves with full ramjet-cycle thrust points at Mach {mach_fixed:g} ({n_ramjet_engines} ramjets)"
     )
     ax.grid(True, alpha=0.35)
     ax.set_xlim(mach_min, mach_max)
@@ -2122,7 +2360,7 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
         "altitude_m": altitude_values_m,
         "altitude_km": altitude_values_m / 1000.0,
         "mach_fixed": np.full_like(altitude_values_m, mach_fixed, dtype=float),
-        "turbo_polynomial_thrust_kN": turbo_at_mach,
+        "turbo_cycle_thrust_kN": turbo_at_mach,
         "ramjet_cycle_total_thrust_kN": ramjet_cycle_at_mach,
         "difference_turbo_minus_ramjet_total_kN": turbo_at_mach - ramjet_cycle_at_mach,
     }
@@ -3902,7 +4140,7 @@ def scramjet_cycle_thrust_at_mach_altitudes(
     altitude_values_m: np.ndarray,
     mdot: float = 100.0,
     phi: float = 0.5,
-    n_scramjet_engines: int = 2,
+    n_scramjet_engines: int = 1,
     suppress_output: bool = True,
 ) -> np.ndarray:
     """
@@ -3958,7 +4196,7 @@ def plot_ramjet_scramjet_cycle_mach_line(
     phi_ramjet: float = 0.5,
     phi_scramjet: float = 0.5,
     n_ramjet_engines: int = 2,
-    n_scramjet_engines: int = 2,
+    n_scramjet_engines: int = 1,
     suppress_output: bool = True,
 ) -> dict[str, np.ndarray]:
     """
@@ -4415,7 +4653,7 @@ def plot_turbo_ramjet_mach3_with_drag(
     Mach-3 turbojet/ramjet transition plot with drag for variable alpha.
 
     Thrust:
-        - turbojet polynomial thrust
+        - turbojet cycle thrust
         - full ramjet-cycle thrust, multiplied by n_ramjet_engines
 
     Drag:
@@ -4549,7 +4787,7 @@ def plot_turbo_ramjet_mach3_with_drag(
 
     legend_elements = [
         Line2D([0], [0], color="black", linestyle="-", linewidth=1.8,
-               label="turbo polynomial curve"),
+               label="turbo cycle curve"),
         Line2D([0], [0], marker="o", color="white", markerfacecolor="gray",
                markeredgecolor="black", markersize=9,
                label=f"turbo at M={mach_fixed:g}"),
@@ -4589,7 +4827,7 @@ def plot_turbo_ramjet_mach3_with_drag(
         "altitude_m": altitude_values_m,
         "altitude_km": altitude_values_m / 1000.0,
         "mach_fixed": np.full_like(altitude_values_m, mach_fixed, dtype=float),
-        "turbo_polynomial_thrust_kN": turbo_at_mach,
+        "turbo_cycle_thrust_kN": turbo_at_mach,
         "ramjet_cycle_total_thrust_kN": ramjet_cycle_at_mach,
         "drag_by_alpha_kN": drag_by_alpha,
         "alpha_values_deg": np.array(alpha_values_deg, dtype=float),
@@ -4609,7 +4847,7 @@ def plot_ramjet_scramjet_mach5_with_drag(
     phi_ramjet: float = 0.5,
     phi_scramjet: float = 0.5,
     n_ramjet_engines: int = 2,
-    n_scramjet_engines: int = 2,
+    n_scramjet_engines: int = 1,
     suppress_output: bool = True,
     alpha_values_deg: list[float] | tuple[float, ...] = (0.0, 3.5, 7.5),
     S_ref: float = 400.0,
@@ -4829,7 +5067,7 @@ if __name__ == "__main__":
         phi_ramjet=0.5,
         phi_scramjet=0.5,
         n_ramjet_engines=2,
-        n_scramjet_engines=2,
+        n_scramjet_engines=1,
         suppress_output=True,
         alpha_values_deg=alpha_values_deg,
         S_ref=S_ref,
