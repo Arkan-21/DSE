@@ -1,4 +1,9 @@
 import math
+import contextlib
+import importlib.util
+import io
+import sys
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
@@ -403,6 +408,17 @@ class MissionSegment:
 
     max_total_accel_g: float = 0.20
 
+    # Optional overrides from the optimized transition-profile code.
+    # When these are provided, the combined sizing loop uses the same
+    # drag/thrust basis as the mission-profile optimizer instead of the
+    # older local polar model.
+    drag_override_N: float | None = None
+    q_override_Pa: float | None = None
+    CL_override: float | None = None
+    CD_override: float | None = None
+    LD_override: float | None = None
+    thrust_req_override_N: float | None = None
+
 
 def segment_lift_required(segment: MissionSegment, W_current: float) -> float:
     gamma_rad = math.radians(segment.flight_path_angle_deg)
@@ -470,6 +486,41 @@ def segment_aero_from_polar(
         raise ValueError("S_plan must be positive.")
     if segment.mach_drag <= 0.0:
         raise ValueError(f"Segment '{segment.name}' needs mach_drag > 0 for drag calculation.")
+
+    # If this segment was imported from the optimized transition-profile code,
+    # use that drag model directly. This keeps the combined sizing consistent
+    # with the mission profile that already sized turbojet/ramjet thrust to
+    # overcome drag + acceleration.
+    if segment.drag_override_N is not None:
+        q = (segment.q_override_Pa if segment.q_override_Pa is not None
+             else dynamic_pressure_from_mach_altitude(segment.mach_drag, segment.altitude_drag))
+        CL_used = segment.CL_override if segment.CL_override is not None else 0.0
+        CD_used = segment.CD_override if segment.CD_override is not None else 0.0
+        LD_used = segment.LD_override if segment.LD_override is not None else (CL_used / CD_used if CD_used > 0 else 0.0)
+
+        return {
+            "D": float(segment.drag_override_N),
+            "L_required": segment_lift_required(segment, W_current),
+            "q": float(q),
+            "C_L_calc": float(CL_used),
+            "C_L_used": float(CL_used),
+            "C_L_force_balance": float(CL_used),
+            "C_D_calc": float(CD_used),
+            "L_over_D_calc": float(LD_used),
+            "C_L_scheduled": float(CL_used),
+            "lift_balance_ratio": 1.0,
+            "force_balance_warning": False,
+            "alpha_required_deg": 0.0,
+            "alpha_deg": 0.0,
+            "a_polar": 0.0,
+            "b_polar": 0.0,
+            "c_polar": 0.0,
+            "mach_original": segment.mach_drag,
+            "mach_used_for_polar": segment.mach_drag,
+            "mach_polar_status": "imported_profile_drag",
+            "mach_regime": mach_regime(segment.mach_drag),
+            "thrust_req_imported_N": segment.thrust_req_override_N if segment.thrust_req_override_N is not None else 0.0,
+        }
 
     q = dynamic_pressure_from_mach_altitude(segment.mach_drag, segment.altitude_drag)
 
@@ -579,7 +630,23 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float, S_plan: f
         else:
             a_x_allow = math.sqrt(a_total_max**2 - a_y**2)
 
-        T_accel_limited = D_used + W_current * a_x_allow
+        # Imported transition-profile segments already include the acceleration
+        # requirement in thrust_req_override_N:
+        #     T_req = D + W_ref * 0.15 g
+        # Use that imported requirement as the thrust cap for fuel burn, instead
+        # of applying a new D + W_current * max_total_accel_g cap here.
+        # This prevents accidentally using 0.30 g thrust in the combined sizing
+        # after the mission optimizer already sized for 0.15 g.
+        if (
+            USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED
+            and segment.thrust_req_override_N is not None
+            and segment.thrust_req_override_N > D_used
+        ):
+            T_accel_limited = float(segment.thrust_req_override_N)
+            a_x_allow = max(0.0, (T_accel_limited - D_used) / W_current)
+        else:
+            T_accel_limited = D_used + W_current * a_x_allow
+
         T_used = min(T_available, T_accel_limited)
 
         if T_available <= D_used:
@@ -1592,79 +1659,394 @@ def build_segments_from_updated_mission_profile(
     return segments, profile
 
 
+
 # =============================================================================
-# Run with updated mission profile
+# Import optimized mission profile from transition optimizer
+# =============================================================================
+
+OPTIMIZED_PROFILE_FILE = "optimize_transition_profile.py"
+USE_IMPORTED_OPTIMIZED_PROFILE = True
+MISSION_IMPORTED_THRUST_MARGIN = 1.00
+# If True, imported profile segments use the optimizer's own thrust requirement
+# T_req = D + 0.15g term, rather than recomputing a new acceleration cap in
+# the combined sizing loop. This avoids double-counting acceleration.
+USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED = True
+MISSION_OPTIMIZER_SUPPRESS_OUTPUT = False
+
+
+def import_transition_optimizer(path: str | Path = OPTIMIZED_PROFILE_FILE):
+    """Dynamically import the optimized transition-profile script."""
+    path = Path(path)
+    if not path.exists():
+        # Convenience fallback: if this combined sizing script is in the same
+        # folder as a differently named optimizer, try the latest plot-only name.
+        fallback = Path("optimize_transition_profile_plot_only.py")
+        if fallback.exists():
+            path = fallback
+        else:
+            raise FileNotFoundError(
+                f"Could not find transition optimizer file: {path}. "
+                "Put optimize_transition_profile_updated_drag.py in the same folder "
+                "as this combined sizing file, or edit OPTIMIZED_PROFILE_FILE."
+            )
+
+    spec = importlib.util.spec_from_file_location("transition_profile_optimizer", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not import transition optimizer from {path}")
+    module = importlib.util.module_from_spec(spec)
+
+    # Important for Python 3.12/3.13 + @dataclass:
+    # dataclasses looks up sys.modules[cls.__module__] while the module is
+    # being executed. Dynamic imports must register the module before exec.
+    sys.modules[spec.name] = module
+
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        # Avoid leaving a half-imported module behind after a failed import.
+        sys.modules.pop(spec.name, None)
+        raise
+
+    return module
+
+
+def run_transition_profile_optimizer(profile_file: str | Path = OPTIMIZED_PROFILE_FILE):
+    """
+    Run the optimized transition-profile code without calling its save/plot routine.
+
+    Returns:
+        module, x_best, sizing
+    """
+    module = import_transition_optimizer(profile_file)
+
+    def _run():
+        maps = module.prepare_thrust_maps()
+        x_best, sizing = module.optimize_profile(maps)
+        return x_best, sizing
+
+    if MISSION_OPTIMIZER_SUPPRESS_OUTPUT:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            x_best, sizing = _run()
+    else:
+        x_best, sizing = _run()
+
+    return module, x_best, sizing
+
+
+def propulsion_from_imported_mode(mode: str) -> str:
+    mode = str(mode).lower()
+    if "turbo" in mode:
+        return "turbojet"
+    if "ram" in mode:
+        return "ramjet"
+    # The current transition optimizer uses turbojet below M=3 and ramjet from M=3.
+    # This fallback keeps M=5 cruise on ramjet instead of scramjet.
+    return "ramjet"
+
+
+def fuel_from_imported_propulsion(propulsion: str) -> str:
+    if propulsion == "turbojet":
+        return "JetA"
+    if propulsion == "ramjet":
+        return "LH2"
+    return "none"
+
+
+def isp_from_imported_propulsion(propulsion: str) -> float:
+    if propulsion == "turbojet":
+        return ISP_BY_PROPULSION["turbojet"]
+    if propulsion == "ramjet":
+        return ISP_BY_PROPULSION["ramjet"]
+    return 0.0
+
+
+def build_segments_from_imported_optimized_profile(
+    cruise_time: float = 90.0 * 60.0,
+    total_range: float = 9500e3,
+    fixed_takeoff_fraction: float = 0.990,
+    fixed_landing_fraction: float = 0.997,
+    profile_file: str | Path = OPTIMIZED_PROFILE_FILE,
+) -> tuple[list[MissionSegment], dict[str, Any]]:
+    """
+    Import the optimized Mach-altitude profile and convert it into combined-sizing segments.
+
+    The imported optimizer already sizes thrust so that:
+        T_available >= drag + acceleration requirement
+
+    Therefore these segments carry over:
+        - Mach
+        - altitude
+        - drag from the optimizer
+        - sized thrust from the optimizer
+        - turbojet/ramjet mode
+
+    Cruise at Mach 5 and 30 km is kept as ramjet, matching the transition optimizer.
+    """
+    module, x_best, sizing = run_transition_profile_optimizer(profile_file)
+    df = sizing.table.copy().sort_values("mach").reset_index(drop=True)
+
+    # Make sure required columns exist. This catches mismatch if the optimizer script changed.
+    required_columns = [
+        "mach", "altitude_m", "mode", "drag_kN", "thrust_req_kN",
+        "sized_T_available_kN", "q_Pa", "CL", "CD", "L_over_D",
+    ]
+    missing = [c for c in required_columns if c not in df.columns]
+    if missing:
+        raise KeyError(f"Transition optimizer output is missing columns: {missing}")
+
+    segments: list[MissionSegment] = []
+
+    # Fixed takeoff bookkeeping segment. Actual climb/acceleration starts from the first imported point.
+    first = df.iloc[0]
+    segments.append(MissionSegment(
+        name="1_takeoff_turbojet_fixed",
+        mode="fixed",
+        fuel_type="JetA",
+        propulsion_mode="turbojet",
+        fixed_fraction=fixed_takeoff_fraction,
+        mach_drag=max(0.05, float(first["mach"])),
+        altitude_drag=max(0.0, float(first["altitude_m"])),
+        flight_path_angle_deg=5.0,
+        T=float(first["sized_T_available_kN"]) * 1000.0 * MISSION_IMPORTED_THRUST_MARGIN,
+        drag_override_N=float(first["drag_kN"]) * 1000.0,
+        thrust_req_override_N=float(first["thrust_req_kN"]) * 1000.0,
+        q_override_Pa=float(first["q_Pa"]),
+        CL_override=float(first["CL"]),
+        CD_override=float(first["CD"]),
+        LD_override=float(first["L_over_D"]),
+    ))
+
+    # Powered climb/acceleration segments from adjacent optimizer points.
+    seg_index = 2
+    for i in range(len(df) - 1):
+        p0 = df.iloc[i]
+        p1 = df.iloc[i + 1]
+
+        M0, M1 = float(p0["mach"]), float(p1["mach"])
+        h0, h1 = float(p0["altitude_m"]), float(p1["altitude_m"])
+        if M1 <= M0:
+            continue
+
+        M_mid = 0.5 * (M0 + M1)
+        h_mid = 0.5 * (h0 + h1)
+        V0 = mach_to_velocity(M0, h0)
+        V1 = mach_to_velocity(M1, h1)
+        V_mid = max(1e-6, 0.5 * (V0 + V1))
+
+        # Use the downstream point for mode because it enforces the M=3 switch cleanly.
+        propulsion = propulsion_from_imported_mode(p1["mode"])
+        fuel_type = fuel_from_imported_propulsion(propulsion)
+        I_sp = isp_from_imported_propulsion(propulsion)
+
+        # Average imported aero/thrust values over the interval.
+        D_override_N = 0.5 * (float(p0["drag_kN"]) + float(p1["drag_kN"])) * 1000.0
+        T_available_N = 0.5 * (float(p0["sized_T_available_kN"]) + float(p1["sized_T_available_kN"])) * 1000.0
+        T_req_override_N = 0.5 * (float(p0["thrust_req_kN"]) + float(p1["thrust_req_kN"])) * 1000.0
+        q_override = 0.5 * (float(p0["q_Pa"]) + float(p1["q_Pa"]))
+        CL_override = 0.5 * (float(p0["CL"]) + float(p1["CL"]))
+        CD_override = 0.5 * (float(p0["CD"]) + float(p1["CD"]))
+        LD_override = 0.5 * (float(p0["L_over_D"]) + float(p1["L_over_D"]))
+
+        # A small margin prevents numerical equality causing T<=D failures in the sizing loop.
+        T_available_N *= MISSION_IMPORTED_THRUST_MARGIN
+
+        # Flight-path angle is not used for range here; it only affects the acceleration limiter.
+        # Keep it modest because the energy-height term already accounts for climb work.
+        gamma_seg = 0.0
+
+        segments.append(MissionSegment(
+            name=f"{seg_index}_imported_profile_M{M0:.2f}_to_M{M1:.2f}_{propulsion}",
+            mode="T_gt_D",
+            fuel_type=fuel_type,
+            propulsion_mode=propulsion,
+            delta_h=h1 - h0,
+            V_initial=V0,
+            V_final=V1,
+            V_average=V_mid,
+            I_sp=I_sp,
+            mach_drag=M_mid,
+            altitude_drag=h_mid,
+            flight_path_angle_deg=gamma_seg,
+            T=T_available_N,
+            max_total_accel_g=getattr(module, "ACCEL_G_TARGET", 0.15),
+            drag_override_N=D_override_N,
+            thrust_req_override_N=T_req_override_N,
+            q_override_Pa=q_override,
+            CL_override=CL_override,
+            CD_override=CD_override,
+            LD_override=LD_override,
+        ))
+        seg_index += 1
+
+    # Ramjet cruise at the final optimizer point.
+    last = df.iloc[-1]
+    M_cruise = float(last["mach"])
+    h_cruise = float(last["altitude_m"])
+    V_cruise = mach_to_velocity(M_cruise, h_cruise)
+    T_cruise_N = float(last["sized_T_available_kN"]) * 1000.0 * MISSION_IMPORTED_THRUST_MARGIN
+    D_cruise_N = float(last["drag_kN"]) * 1000.0
+
+    segments.append(MissionSegment(
+        name=f"{seg_index}_cruise_M{M_cruise:.1f}_ramjet",
+        mode="T_eq_D",
+        fuel_type="LH2",
+        propulsion_mode="ramjet",
+        I_sp=ISP_BY_PROPULSION["ramjet"],
+        mach_drag=M_cruise,
+        altitude_drag=h_cruise,
+        flight_path_angle_deg=0.0,
+        T=T_cruise_N,
+        delta_t=cruise_time,
+        drag_override_N=D_cruise_N,
+        thrust_req_override_N=float(last["thrust_req_kN"]) * 1000.0,
+        q_override_Pa=float(last["q_Pa"]),
+        CL_override=float(last["CL"]),
+        CD_override=float(last["CD"]),
+        LD_override=float(last["L_over_D"]),
+    ))
+    seg_index += 1
+
+    descent = analyse_descent(
+        end_cruise_x=cruise_time * V_cruise,
+        h_cruise=h_cruise,
+        v_cruise=V_cruise,
+        acc_tot=getattr(module, "ACCEL_G_TARGET", 0.15) * 9.81,
+        total_range=total_range,
+    )
+
+    segments.append(MissionSegment(
+        name=f"{seg_index}_unpowered_descent",
+        mode="fixed",
+        fuel_type="none",
+        propulsion_mode="none",
+        fixed_fraction=1.0,
+        mach_drag=max(0.65, 0.5 * M_cruise),
+        altitude_drag=0.5 * h_cruise,
+        flight_path_angle_deg=-5.0,
+    ))
+    seg_index += 1
+
+    segments.append(MissionSegment(
+        name=f"{seg_index}_landing_turbojet_fixed",
+        mode="fixed",
+        fuel_type="JetA",
+        propulsion_mode="turbojet",
+        fixed_fraction=fixed_landing_fraction,
+        mach_drag=0.25,
+        altitude_drag=0.0,
+        flight_path_angle_deg=-3.0,
+        T=float(first["sized_T_available_kN"]) * 1000.0 * MISSION_IMPORTED_THRUST_MARGIN,
+        drag_override_N=float(first["drag_kN"]) * 1000.0,
+        thrust_req_override_N=float(first["thrust_req_kN"]) * 1000.0,
+        q_override_Pa=float(first["q_Pa"]),
+        CL_override=float(first["CL"]),
+        CD_override=float(first["CD"]),
+        LD_override=float(first["L_over_D"]),
+    ))
+
+    profile = {
+        "source_file": str(profile_file),
+        "imported_rows": len(df),
+        "M_start": float(df["mach"].iloc[0]),
+        "M_switch": getattr(module, "M_SWITCH", 3.0),
+        "M_cruise": M_cruise,
+        "h_start": float(df["altitude_m"].iloc[0]),
+        "h_cruise": h_cruise,
+        "V_cruise": V_cruise,
+        "cruise_time": cruise_time,
+        "cruise_range": cruise_time * V_cruise,
+        "total_range": total_range,
+        "descent_fits_total_range": descent.get("descent_fits_total_range", True),
+        "final_total_range": descent.get("final_total_range", cruise_time * V_cruise + descent.get("x_descent", 0.0)),
+        "x_descent": descent.get("x_descent", 0.0),
+        "turbo_design_lbf_per_engine": sizing.turbo_design_lbf_per_engine,
+        "turbo_design_kN_per_engine": sizing.turbo_design_lbf_per_engine * 0.0044482216152605,
+        "ramjet_design_mdot_kg_s_total": sizing.ramjet_design_mdot_kg_s,
+        "ramjet_design_mdot_kg_s_per_engine": sizing.ramjet_design_mdot_kg_s / max(1, getattr(module, "N_RAMJETS", 1)),
+        "use_imported_thrust_requirement_for_T_used": USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED,
+        "mission_imported_thrust_margin": MISSION_IMPORTED_THRUST_MARGIN,
+        "turbo_scale": sizing.max_turbo_scale,
+        "ramjet_scale": sizing.max_ramjet_scale,
+        "mission_optimizer_objective": sizing.objective,
+        "mission_optimizer_penalty": sizing.penalty,
+    }
+
+    return segments, profile
+
+# =============================================================================
+# Run with imported optimized mission profile
 # =============================================================================
 
 if __name__ == "__main__":
 
     # -------------------------------------------------------------------------
-    # Mission definition using updated mission profile
+    # Mission definition using imported optimized transition profile
     # -------------------------------------------------------------------------
-    gamma_mission = 7.0
-    h_cruise = 30_000.0
-    acc_tot = 0.15 * 9.81
-    M_cruise = 5.0
     cruise_time = 90.0 * 60.0
     total_range = 9500e3
 
-    segments, profile = build_segments_from_updated_mission_profile(
-        gamma_mission=gamma_mission,
-        h_cruise=h_cruise,
-        acc_tot=acc_tot,
-        M_cruise=M_cruise,
-        cruise_time=cruise_time,
-        total_range=total_range,
-        fixed_takeoff_fraction=0.990,
-        fixed_landing_fraction=0.997,
-    )
-
-    print("\nUpdated mission profile estimate")
-    print("--------------------------------")
-    print(f"gamma_mission:       {profile['gamma_mission']:.2f} deg")
-    print(f"h_cruise:            {profile['h_cruise']:.1f} m")
-    print(f"acc_tot:             {profile['acc_tot']:.4f} m/s²")
-    print(f"M_cruise:            {profile['M_cruise']:.3f}")
-    print(f"V_cruise:            {profile['V_cruise']:.3f} m/s")
-    print(f"V_top_of_climb:      {profile['V_top']:.3f} m/s")
-    print(f"M_top_of_climb:      {profile['M_top']:.3f}")
-    print(f"dx_to_cruise:        {profile['dx_to_cruise'] / 1000:.3f} km")
-    print(f"dx_hor_acc:          {profile['dx_hor_acc'] / 1000:.3f} km")
-    print(f"cruise_start_x:      {profile['cruise_start_x'] / 1000:.3f} km")
-    print(f"cruise_range:        {profile['cruise_range'] / 1000:.3f} km")
-    print(f"x_descent:           {profile['x_descent'] / 1000:.3f} km")
-    print(f"final_total_range:   {profile['final_total_range'] / 1000:.3f} km")
-    print(f"descent_fits_range:  {profile.get('descent_fits_total_range', True)}")
-
-    if profile["M_top"] > M_cruise:
-        print(
-            "\nWarning: the constant-acceleration climb reaches a Mach number above "
-            "the requested cruise Mach before/at h_cruise. The sizing segments "
-            "still follow the updated profile split points, but check gamma_mission "
-            "and acc_tot if this was not intended."
+    if USE_IMPORTED_OPTIMIZED_PROFILE:
+        segments, profile = build_segments_from_imported_optimized_profile(
+            cruise_time=cruise_time,
+            total_range=total_range,
+            fixed_takeoff_fraction=0.990,
+            fixed_landing_fraction=0.997,
+            profile_file=OPTIMIZED_PROFILE_FILE,
         )
+    else:
+        # Fallback to the old internal mission-profile builder.
+        segments, profile = build_segments_from_updated_mission_profile(
+            gamma_mission=7.0,
+            h_cruise=30_000.0,
+            acc_tot=0.15 * 9.81,
+            M_cruise=5.0,
+            cruise_time=cruise_time,
+            total_range=total_range,
+            fixed_takeoff_fraction=0.990,
+            fixed_landing_fraction=0.997,
+        )
+
+    print("\nImported optimized mission profile")
+    print("----------------------------------")
+    print(f"source_file:          {profile.get('source_file', 'internal_builder')}")
+    print(f"rows imported:        {profile.get('imported_rows', 0)}")
+    print(f"M_start:              {profile.get('M_start', 0.0):.3f}")
+    print(f"M_switch:             {profile.get('M_switch', 3.0):.3f}")
+    print(f"M_cruise:             {profile.get('M_cruise', 5.0):.3f}")
+    print(f"h_cruise:             {profile.get('h_cruise', 30_000.0):.1f} m")
+    print(f"V_cruise:             {profile.get('V_cruise', 0.0):.3f} m/s")
+    print(f"cruise_range:         {profile.get('cruise_range', 0.0) / 1000:.3f} km")
+    print(f"x_descent:            {profile.get('x_descent', 0.0) / 1000:.3f} km")
+    print(f"final_total_range:    {profile.get('final_total_range', 0.0) / 1000:.3f} km")
+    print(f"descent_fits_range:   {profile.get('descent_fits_total_range', True)}")
+    print(f"turbo design thrust:  {profile.get('turbo_design_lbf_per_engine', 0.0):,.0f} lbf/engine")
+    print(f"turbo design thrust:  {profile.get('turbo_design_kN_per_engine', 0.0):,.2f} kN/engine")
+    print(f"ramjet mdot total:    {profile.get('ramjet_design_mdot_kg_s_total', 0.0):,.2f} kg/s")
+    print(f"ramjet mdot/engine:   {profile.get('ramjet_design_mdot_kg_s_per_engine', 0.0):,.2f} kg/s")
 
     print("\nGenerated sizing segments")
     print("-------------------------")
     for s in segments:
         print(
-            f"{s.name:<45s} "
+            f"{s.name:<52s} "
             f"{s.propulsion_mode:<9s} "
             f"{s.fuel_type:<5s} "
             f"M_drag={s.mach_drag:>6.3f} "
             f"h_drag={s.altitude_drag:>9.1f} m "
+            f"T={s.T:>11.1f} N "
+            f"D_override={s.drag_override_N if s.drag_override_N is not None else 0.0:>11.1f} N "
             f"mode={s.mode:<6s}"
         )
 
     S_plan, W_to, result = converge_S_plan_and_TOGW(
-        tau=0.14,
+        tau=0.12,
         configuration="blended_body",
-        S_plan_guess=450.0,
+        S_plan_guess=330.15,
         I_str=21.0,
         I_tps=6.0,
         KIT=1.0,
         I_tank=4.0,
-        rho_LH2=70.0,   
+        rho_LH2=70.0,
         rho_JetA=800.0,
         k_pf=1.0,
         I_sub=0.04,
@@ -1674,13 +2056,13 @@ if __name__ == "__main__":
         rho_payload=100.0,
         segments=segments,
         k_rf=0.06,
-        W_to_guess=100_000.0,
+        W_to_guess=74_860.0,
         rho_str=2700.0,
         rho_tps=2500.0,
         rho_tank_str=2700.0,
         K_lg=0.01,
         K_sub=0.02,
-        K_void=0.3,
+        K_void=0.2,
         volume_tol=1.0,
         weight_tol=1.0,
         S_plan_relaxation=0.5,
@@ -1720,7 +2102,7 @@ if __name__ == "__main__":
     print("--------------------------------")
     for segment_name, burn in result["segment_burns"].items():
         mode = result["segment_propulsion_modes"][segment_name]
-        print(f"{segment_name:<45s} [{mode:<8s}]: {burn:.3f} kg")
+        print(f"{segment_name:<52s} [{mode:<8s}]: {burn:.3f} kg")
 
     print("\nSegment drag/thrust/aero values")
     print("-------------------------------")
@@ -1731,23 +2113,17 @@ if __name__ == "__main__":
         T_available = aero.get("T_available", segment.T)
 
         print(
-            f"{segment.name:<45s} "
+            f"{segment.name:<52s} "
             f"D={D_used:>12.3f} N   "
             f"T_used={T_used:>12.3f} N   "
             f"T_avail={T_available:>12.3f} N   "
             f"T/D={T_used / D_used if D_used > 0 else 0.0:>8.3f}   "
             f"CL_used={aero.get('C_L_used', 0.0):>8.4f}   "
-            f"CL_req={aero.get('C_L_force_balance', 0.0):>8.4f}   "
-            f"CL_sched={aero.get('C_L_scheduled', 0.0):>8.4f}   "
-            f"CL_sched/req={aero.get('lift_balance_ratio', 0.0):>6.3f}   "
-            f"alpha_req={aero.get('alpha_required_deg', 0.0):>7.2f} deg   "
             f"CD={aero.get('C_D_calc', 0.0):>8.5f}   "
             f"L/D={aero.get('L_over_D_calc', 0.0):>8.3f}   "
             f"q={aero.get('q', 0.0):>10.1f} Pa   "
             f"M={segment.mach_drag:>6.3f}   "
-            f"polar_M={aero.get('mach_used_for_polar', segment.mach_drag):>6.3f}   "
-            f"polar_status={aero.get('mach_polar_status', 'unknown'):>17s}   "
-            f"regime={aero.get('mach_regime', 'unknown'):>10s}   "
+            f"drag_status={aero.get('mach_polar_status', 'unknown'):>21s}   "
             f"h={segment.altitude_drag:>9.1f} m   "
             f"a_x={aero.get('axial_accel_g', 0.0):>6.3f} g   "
             f"a_y={aero.get('vertical_accel_g', 0.0):>6.3f} g   "

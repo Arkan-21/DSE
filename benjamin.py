@@ -22,14 +22,21 @@ for i in range(len(x3)):
     y3a = -326 * tau**4 + 189.99* tau**3 -22.369* tau**2 + 3.7082* tau+ 2.3081 #blended_body
     y3.append(y3a)
 
-plt.plot(x1, y1, label='waverider')
-plt.plot(x2, y2, label='wing_body')
-plt.plot(x3, y3, label='blended_body')
-plt.xlabel('tau')
-plt.ylabel('K_W')
-plt.xlim(0, 0.4)
-plt.title('K_W vs tau')
-plt.legend()
-plt.grid()
-plt.show() 
+fig, ax = plt.subplots(figsize=(8, 5))
 
+ax.plot(x1, y1, color='#D85A30', linewidth=2.0, label='Waverider')
+ax.plot(x2, y2, color='#378ADD', linewidth=2.0, label='Wing body')
+ax.plot(x3, y3, color='#1D9E75', linewidth=2.0, label='Blended body')
+
+ax.set_xlabel(r"Küchemann's $\tau$", fontsize=12)
+ax.set_ylabel(r'$K_W$', fontsize=12)
+ax.set_title(r'$K_W$ vs $\tau$', fontsize=13)
+
+ax.set_xlim(0, 0.4)
+ax.tick_params(direction='in', which='both', labelsize=10)
+ax.grid(True, linestyle=':', alpha=0.6)
+
+ax.legend(frameon=True, fontsize=10, edgecolor='grey')
+
+plt.tight_layout()
+plt.show()

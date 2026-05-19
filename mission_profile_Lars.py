@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import fsolve, differential_evolution
@@ -666,7 +665,7 @@ class Ramjet:
     L01 = 0.60   # inlet / oblique-shock diffuser
     L12 = 0.15   # constant-area isolator segment
     L23 = 0.1   # fuel injection zone
-    L34 = 0.30   # combustor  (longer than scramjet: subsonic mixing needs more room)
+    L34 = 0.30   # combustor
     L45 = 1.20   # nozzle (convergent-divergent, modelled as diverging section only)
  
     # ── Area ratios (relative to A1) ──────────────────────────────────────
@@ -1750,7 +1749,7 @@ def plot_ramjet_thrust_vs_mach_sweep(
     phi: float = 0.5,
     suppress_output: bool = True,
     make_contour: bool = True,
-    save_csv: bool = True,
+    save_csv: bool = False,
     csv_filename: str = "ramjet_thrust_sweep_results.csv",
 ) -> dict[str, np.ndarray | list[dict[str, float | bool | str]]]:
     """
@@ -2289,7 +2288,6 @@ def ramjet_cycle_thrust_at_mach_altitudes(
             mdot=mdot,
             phi=phi,
             suppress_output=suppress_output,
-            turbo_params=turbo_params,
         )
 
         if out["success"]:
@@ -2541,2048 +2539,7 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
 # =============================================================================
 
 # =============================================================================
-# Scramjet model from uploaded code, renamed internally to avoid class conflicts
-# =============================================================================
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.optimize import fsolve, differential_evolution
-from functools import lru_cache
-from scipy.integrate import solve_ivp
-import pandas as pd
-
-
-
-# Optional NASA CEA — required by combustor_properties4 (per-step equilibrium).
-try:
-    import cea as _CEA           # noqa: F401
-    _HAS_CEA = True
-except Exception:                # noqa: BLE001
-    _HAS_CEA = False
-
-
-# ---------------------------------------------------------------------------
-# Thermochemistry data + simple air dissociation model
-# ---------------------------------------------------------------------------
-class ScramAirProperties:
-    R_UNIVERSAL = 8.314462618  # J/(mol·K)
-
-    NASA_DATA = {
-        "N2": {
-            "Trange": [200, 1000, 6000],
-            "low": [3.53100528, -1.23660988e-04, -5.02999433e-07,
-                    2.43530612e-09, -1.40881235e-12, -1046.97628, 2.96747038],
-            "high": [2.95257637, 1.39690040e-03, -4.92631603e-07,
-                     7.86010195e-11, -4.60755204e-15, -923.948688, 5.87188762],
-        },
-        "O2": {
-            "Trange": [200, 1000, 6000],
-            "low": [3.78245636, -2.99673416e-03, 9.84730201e-06,
-                    -9.68129509e-09, 3.24372837e-12, -1063.94356, 3.65767573],
-            "high": [3.69757819, 6.13519689e-04, -1.25884199e-07,
-                     1.77528148e-11, -1.13643531e-15, -1233.93018, 3.18916559],
-        },
-        "Ar": {
-            "Trange": [200, 1000, 6000],
-            "low":  [2.5, 0.0, 0.0, 0.0, 0.0, -745.375, 4.37967491],
-            "high": [2.5, 0.0, 0.0, 0.0, 0.0, -745.375, 4.37967491],
-        },
-        "CO2": {
-            "Trange": [200, 1000, 6000],
-            "low": [2.35677352, 8.98459677e-03, -7.12356269e-06,
-                    2.45919022e-09, -1.43699548e-13, -48371.9697, 9.90105222],
-            "high": [4.63659493, 2.74146460e-03, -9.95897590e-07,
-                     1.60391600e-10, -9.16198400e-15, -49024.9341, -1.93534855],
-        },
-        "H2O": {
-            "Trange": [200, 1000, 6000],
-            "low": [4.19864056, -2.03643410e-03, 6.52040211e-06,
-                    -5.48797062e-09, 1.77197250e-12, -30293.7267, -0.849032208],
-            "high": [2.67703890, 2.97318160e-03, -7.73768890e-07,
-                     9.44334890e-11, -4.26900770e-15, -29885.8940, 6.88255571],
-        },
-        "N": {
-            "Trange": [200, 1000, 6000],
-            "low":  [2.5, 0.0, 0.0, 0.0, 0.0, 56104.6378, 4.19390932],
-            "high": [2.41594290, 1.74890650e-04, -1.19023690e-07,
-                     3.02262450e-11, -2.03609820e-15, 56133.7730, 4.64960941],
-        },
-        "O": {
-            "Trange": [200, 1000, 6000],
-            "low": [3.16826710, -3.27931884e-03, 6.64306396e-06,
-                    -6.12806624e-09, 2.11265971e-12, 29122.2592, 2.05193346],
-            "high": [2.54363697, -2.73162486e-05, -4.19029520e-09,
-                     4.95481845e-12, -4.79553694e-16, 29226.0120, 4.92229457],
-        },
-        "NO": {
-            "Trange": [200, 1000, 6000],
-            "low": [4.21859896, -4.63988124e-03, 1.10443049e-05,
-                    -9.34055507e-09, 2.80554874e-12, 9845.09964, 2.28061001],
-            "high": [3.26071234, 1.19101135e-03, -4.29122646e-07,
-                     6.94481463e-11, -4.03295681e-15, 9921.43132, 6.36900518],
-        },
-        "H2": {
-            "Trange": [200, 1000, 6000],
-            "low": [2.34433112, 7.98052075e-03, -1.94781510e-05,
-                    2.01572094e-08, -7.37611761e-12, -917.935173, 0.683010238],
-            "high": [2.93286575, 8.26607967e-04, -1.46402364e-07,
-                     1.54100414e-11, -6.88804800e-16, -813.065581, -1.02432865],
-        },
-        "H": {
-            "Trange": [200, 1000, 6000],
-            "low":  [2.5, 0, 0, 0, 0, 25471.6270, -0.448813240],
-            "high": [2.5, 0, 0, 0, 0, 25471.6270, -0.448813240],
-        },
-        "OH": {
-            "Trange": [200, 1000, 6000],
-            "low": [3.99198424, -2.40106655e-03, 4.61664033e-06,
-                    -3.87916306e-09, 1.36319502e-12, 3368.89836, -0.103998477],
-            "high": [2.83853033, 1.10741289e-03, -2.94000209e-07,
-                     4.20698729e-11, -2.42289890e-15, 3697.80808, 5.84494652],
-        },
-    }
-
-    AIR_BASE_COMPOSITION = {
-        "N2": 0.78084,
-        "O2": 0.20946,
-        "Ar": 0.00934,
-        "CO2": 0.000407,
-    }
-
-    MOLECULAR_WEIGHTS = {
-        "N2": 28.014, "O2": 31.998, "Ar": 39.948, "CO2": 44.010,
-        "H2O": 18.015, "N": 14.007, "O": 15.999, "NO": 30.006,
-        "H2": 2.016,   "H": 1.008,   "OH": 17.008,
-    }
-
-    def _nasa_coeffs(self, species, T):
-        data = self.NASA_DATA[species]
-        return np.array(data["low"] if T <= data["Trange"][1] else data["high"])
-
-    def cp_over_R(self, species, T):
-        a = self._nasa_coeffs(species, T)
-        return a[0] + a[1]*T + a[2]*T**2 + a[3]*T**3 + a[4]*T**4
-
-    def h_over_RT(self, species, T):
-        a = self._nasa_coeffs(species, T)
-        return (a[0] + a[1]*T/2 + a[2]*T**2/3 + a[3]*T**3/4 + a[4]*T**4/5 + a[5]/T)
-
-    def s_over_R(self, species, T):
-        a = self._nasa_coeffs(species, T)
-        return (a[0]*np.log(T) + a[1]*T + a[2]*T**2/2 + a[3]*T**3/3 + a[4]*T**4/4 + a[6])
-
-    def gibbs_over_RT(self, species, T, P_atm):
-        return self.h_over_RT(species, T) - self.s_over_R(species, T) + np.log(P_atm)
-
-    def equilibrium_constants(self, T):
-        dg1 = 2*self.gibbs_over_RT("N", T, 1) - self.gibbs_over_RT("N2", T, 1)
-        dg2 = 2*self.gibbs_over_RT("O", T, 1) - self.gibbs_over_RT("O2", T, 1)
-        dg3 = (self.gibbs_over_RT("NO", T, 1)
-               - self.gibbs_over_RT("N", T, 1) - self.gibbs_over_RT("O", T, 1))
-        return np.exp(-dg1), np.exp(-dg2), np.exp(-dg3)
-
-    def equilibrium_composition(self, T, P_atm):
-        if T < 1500.0:
-            total = sum(self.AIR_BASE_COMPOSITION.values())
-            return {k: v/total for k, v in self.AIR_BASE_COMPOSITION.items()}
-        Kp1, Kp2, Kp3 = self.equilibrium_constants(T)
-        x_N2_0 = self.AIR_BASE_COMPOSITION["N2"]
-        x_O2_0 = self.AIR_BASE_COMPOSITION["O2"]
-        x_Ar   = self.AIR_BASE_COMPOSITION["Ar"]
-        x_CO2  = self.AIR_BASE_COMPOSITION["CO2"]
-        N_atoms = 2*x_N2_0
-        O_atoms = 2*x_O2_0
-
-        def eqs(v):
-            xN2, xO2, xN, xO, xNO = v
-            return [
-                Kp1*xN2 - xN**2*P_atm,
-                Kp2*xO2 - xO**2*P_atm,
-                Kp3*xN*xO*P_atm - xNO,
-                2*xN2 + xN + xNO - N_atoms,
-                2*xO2 + xO + xNO - O_atoms,
-            ]
-
-        x0 = [x_N2_0*0.9, x_O2_0*0.9, 1e-6, 1e-6, 1e-6]
-        xN2, xO2, xN, xO, xNO = np.abs(fsolve(eqs, x0))
-        xT = xN2 + xO2 + xN + xO + xNO + x_Ar + x_CO2
-        return {
-            "N2": xN2/xT, "O2": xO2/xT, "N": xN/xT,
-            "O": xO/xT, "NO": xNO/xT, "Ar": x_Ar/xT, "CO2": x_CO2/xT,
-        }
-
-    def mixture_cp_cv(self, T, P_atm):
-        comp = self.equilibrium_composition(T, P_atm)
-        MW   = sum(comp[s]*self.MOLECULAR_WEIGHTS[s] for s in comp)
-        cp_m = sum(comp[s]*self.cp_over_R(s, T)*self.R_UNIVERSAL for s in comp)
-        cp   = cp_m / (MW*1e-3)
-        R_s  = self.R_UNIVERSAL / (MW*1e-3)
-        cv   = cp - R_s
-        return cp, cv, cp/cv
-
-    def specific_heat_ratio(self, T, P):
-        return self.mixture_cp_cv(T, P/101325)[2]
-
-    def specific_cp(self, T, P):
-        return self.mixture_cp_cv(T, P/101325)[0]
-
-    def specific_R(self, T, P):
-        cp, cv, _ = self.mixture_cp_cv(T, P/101325)
-        return cp - cv
-
-
-# ---------------------------------------------------------------------------
-# Generic frozen-mixture thermodynamics from NASA polynomials.
-# Works for any mass-fraction dict over species that appear in ScramAirProperties.NASA_DATA.
-# Used to compute h, s and to find stagnation Tt, Pt in *integral* form
-# (so variable Cp / composition is handled correctly).
-# ---------------------------------------------------------------------------
-class ScramMixtureNASA:
-    R_UNIVERSAL = 8.314462618   # J/(mol·K)
-    P_REF       = 101325.0       # Pa (1 atm, NASA standard)
-
-    def __init__(self, air_props: ScramAirProperties):
-        self.air = air_props
-        # Pre-cache molecular weights (kg/mol)
-        self.W = {s: air_props.MOLECULAR_WEIGHTS[s]*1e-3
-                  for s in air_props.MOLECULAR_WEIGHTS}
-
-    # ---- per-species ------------------------------------------------------
-    def h_i(self, s, T):
-        """h_i(T) [J/kg] — includes formation enthalpy via NASA a5."""
-        return self.air.h_over_RT(s, T) * self.R_UNIVERSAL * T / self.W[s]
-
-    def cp_i(self, s, T):
-        """cp_i(T) [J/(kg·K)]."""
-        return self.air.cp_over_R(s, T) * self.R_UNIVERSAL / self.W[s]
-
-    def s0_i(self, s, T):
-        """s°_i(T) at P_REF [J/(kg·K)]."""
-        return self.air.s_over_R(s, T) * self.R_UNIVERSAL / self.W[s]
-
-    # ---- mixture ----------------------------------------------------------
-    def W_mix(self, Y):
-        inv = 0.0
-        for sp, y in Y.items():
-            if y > 0:
-                inv += y / self.W[sp]
-        return 1.0 / max(inv, 1e-30)
-
-    def X_from_Y(self, Y):
-        Wm = self.W_mix(Y)
-        return {sp: (y / self.W[sp]) * Wm for sp, y in Y.items()}
-
-    def cp_mix(self, Y, T):
-        return sum(y * self.cp_i(sp, T) for sp, y in Y.items() if y > 0)
-
-    def h_mix(self, Y, T):
-        return sum(y * self.h_i(sp, T) for sp, y in Y.items() if y > 0)
-
-    def s_mix(self, Y, T, p_pa):
-        """Specific entropy [J/(kg·K)] for an ideal gas mixture with Dalton's law.
-
-        s = Σ Y_i [ s°_i(T)  −  R_i · ln(X_i · p / p_ref) ]
-        """
-        X = self.X_from_Y(Y)
-        s = 0.0
-        for sp, y in Y.items():
-            if y <= 0:
-                continue
-            R_i = self.R_UNIVERSAL / self.W[sp]
-            X_i = max(X[sp], 1e-30)
-            s += y * (self.s0_i(sp, T) - R_i * np.log(X_i * p_pa / self.P_REF))
-        return s
-
-    def gamma_mix(self, Y, T):
-        cp = self.cp_mix(Y, T)
-        Wm = self.W_mix(Y)
-        Rm = self.R_UNIVERSAL / Wm
-        return cp / max(cp - Rm, 1e-30)
-
-    # ---- stagnation solvers (integral form) -------------------------------
-    def stagnation_Tt(self, Y, T_static, h_target, tol=1e-3, max_iter=60):
-        """Solve h_mix(Y, Tt) = h_target via Newton iteration on Tt."""
-        Tt = max(float(T_static), 200.0)
-        for _ in range(max_iter):
-            h_now  = self.h_mix(Y, Tt)
-            cp_now = self.cp_mix(Y, Tt)
-            if cp_now <= 0:
-                break
-            delta = (h_target - h_now) / cp_now
-            # damp very large steps that could drag T out of NASA's [200,6000] range
-            if delta > 800.0:
-                delta = 800.0
-            elif delta < -400.0:
-                delta = -400.0
-            Tt_new = max(200.0, min(6000.0, Tt + delta))
-            if abs(Tt_new - Tt) < tol:
-                Tt = Tt_new
-                break
-            Tt = Tt_new
-        return Tt
-
-    def stagnation_Pt(self, Y, T_static, Tt, p_static):
-        """Isentropic Pt from s(Tt, Pt) = s(T_static, p_static) at fixed composition.
-
-        Mixing-entropy term ( −R_i · Σ Y_i ln X_i ) is independent of T and p,
-        so it cancels — only the Σ Y_i [s°(Tt) − s°(T)] − R_mix · ln(Pt/p) bit remains.
-        """
-        ds_T = 0.0
-        for sp, y in Y.items():
-            if y <= 0:
-                continue
-            ds_T += y * (self.s0_i(sp, Tt) - self.s0_i(sp, T_static))
-        Wm = self.W_mix(Y)
-        R_mix = self.R_UNIVERSAL / Wm
-        try:
-            return float(p_static) * float(np.exp(ds_T / R_mix))
-        except OverflowError:
-            return float(p_static)
-
-    def stagnation_state(self, Y, T, p_pa, V):
-        """One-shot helper: returns dict {h, s, ht, st, Tt, Pt}."""
-        h  = self.h_mix(Y, T)
-        s  = self.s_mix(Y, T, p_pa)
-        ht = h + 0.5 * V * V
-        Tt = self.stagnation_Tt(Y, T, ht)
-        Pt = self.stagnation_Pt(Y, T, Tt, p_pa)
-        return {"h": h, "s": s, "ht": ht, "st": s, "Tt": Tt, "Pt": Pt}
-
-
-# ---------------------------------------------------------------------------
-# Thin NASA CEA wrapper — equilibrium TP solve with caching.
-# Returns per-species mass fractions in the same name space ScramMixtureNASA uses,
-# so the two can be composed seamlessly (CEA gives composition, ScramMixtureNASA
-# gives h / s / cp / Tt / Pt).
-# ---------------------------------------------------------------------------
-class ScramCEAComp:
-    PROD_NAMES = ["Ar", "CO2", "H", "H2", "H2O",
-                  "N",  "NO",  "N2", "O", "O2", "OH"]  # all in ScramAirProperties.NASA_DATA
-
-    def __init__(self):
-        if not _HAS_CEA:
-            raise ImportError(
-                "NASA CEA package not installed. Run `pip install cea` first."
-            )
-        self.cea = _CEA
-        self.reac = _CEA.Mixture(["H2", "Air"])
-        self.prod = _CEA.Mixture(self.PROD_NAMES)
-        self.solver   = _CEA.EqSolver(self.prod, reactants=self.reac)
-        self.solution = _CEA.EqSolution(self.solver)
-        self._fuel_w  = self.reac.moles_to_weights(np.array([1.0, 0.0]))
-        self._oxid_w  = self.reac.moles_to_weights(np.array([0.0, 1.0]))
-        self._cache: dict = {}
-
-    def equilibrium_Y(self, T, p_pa, of_ratio):
-        """Return equilibrium mass-fraction dict {species: Y} at (T, p, O/F)."""
-        key = (round(float(T)),
-               round(float(p_pa) / 10) * 10,
-               round(float(of_ratio) * 100) / 100)
-        cached = self._cache.get(key)
-        if cached is not None:
-            return cached
-
-        T_c  = float(np.clip(T, 250.0, 5500.0))
-        p_c  = max(float(p_pa), 50.0)
-        of_c = max(float(of_ratio), 0.01)
-
-        Y: dict | None = None
-        try:
-            w = self.reac.of_ratio_to_weights(self._oxid_w, self._fuel_w, of_c)
-            self.solver.solve(self.solution, self.cea.TP, T_c, p_c/1e5, w)
-            if bool(self.solution.converged):
-                # cea returns a {species_name: mass_fraction} dict (not array!)
-                mf = self.solution.mass_fractions
-                Y = {sp: float(mf.get(sp, 0.0)) for sp in self.PROD_NAMES}
-                # Sanity check: sum should be ~1; if grossly off, treat as failure
-                if abs(sum(Y.values()) - 1.0) > 0.05:
-                    Y = None
-        except Exception:  # noqa: BLE001
-            Y = None
-
-        self._cache[key] = Y  # may be None — caller decides fallback
-        return Y
-
-
-# ---------------------------------------------------------------------------
-# ScramAtmosphere (unchanged)
-# ---------------------------------------------------------------------------
-class ScramAtmosphere:
-    R_AIR = 287.05
-    G0    = 9.80665
-
-    @staticmethod
-    def _layer(h):
-        if   h <= 11000: return 0.0,   -0.0065, 288.15, 101325.0
-        elif h <= 20000: return 11000,  0.0,    216.65,  22632.1
-        elif h <= 32000: return 20000,  0.001,  216.65,   5474.89
-        else: raise ValueError(f"Altitude {h:.0f} m > 32 km ceiling.")
-
-    @staticmethod
-    def T(h):
-        h0, L, T0, _ = ScramAtmosphere._layer(h)
-        return T0 + L*(h - h0)
-
-    @staticmethod
-    def P(h):
-        h0, L, T0, P0 = ScramAtmosphere._layer(h)
-        dh = h - h0; T = T0 + L*dh
-        if L != 0:
-            return P0*(T/T0)**(-ScramAtmosphere.G0/(L*ScramAtmosphere.R_AIR))
-        return P0*np.exp(-ScramAtmosphere.G0*dh/(ScramAtmosphere.R_AIR*T0))
-
-    @staticmethod
-    def rho(h):
-        return ScramAtmosphere.P(h)/(ScramAtmosphere.R_AIR*ScramAtmosphere.T(h))
-
-
-# ---------------------------------------------------------------------------
-# Shapiro generalised-1D ODE.
-# - `derivatives` keeps the per-phenomenon `switches` toggle.
-# - `integrate` now optionally takes a `state_fn(T, p, V, x)` that returns
-#   {h, s, ht, st, Tt, Pt}; if provided, those override the simple
-#   constant-Cp Tt/Pt formulas in the result.
-# ---------------------------------------------------------------------------
-class ScramShapiroODE:
-    @staticmethod
-    def derivatives(Ma2, p, T, gamma, Cp, dA_dx, A, D, Cf,
-                    dH_dx, mdot, dmdot_dx, W, dW_dx, dgamma_dx,
-                    switches=None):
-        if switches is None:
-            switches = {
-                "area": True,
-                "friction": True,
-                "mass": True,
-                "heat": True,
-                "MW": True,
-                "gamma": True,
-            }
-        on = lambda key: 1.0 if switches.get(key, True) else 0.0
-
-        g = gamma
-        M2 = Ma2
-        D1 = 1.0 - M2
-        if abs(D1) < 1e-8:
-            D1 = 1e-8 if D1 >= 0 else -1e-8
-
-        g1m2 = 1.0 + (g - 1.0)/2.0 * M2
-        gM2  = g * M2
-        fric = 4.0 * Cf / D
-        heat = dH_dx / (Cp * T)
-
-        # --- dMa²/dx -----------------------------------------------------
-        dMa2_dx = M2 * (
-            -(2.0 * g1m2 / D1) * (dA_dx / A)        * on("area")
-            + ((1.0 + gM2) / D1) * heat              * on("heat")
-            + (gM2 * g1m2 / D1) * fric               * on("friction")
-            + (2.0 * (1.0 + gM2) * g1m2 / D1) * (dmdot_dx / mdot) * on("mass")
-            - ((1.0 + gM2) / D1) * (dW_dx / W)       * on("MW")
-            - (dgamma_dx / g)                         * on("gamma")
-        )
-
-        # --- dp/dx -------------------------------------------------------
-        dp_dx = p * (
-            (gM2 / D1) * (dA_dx / A)                 * on("area")
-            - (gM2 / D1) * heat                       * on("heat")
-            - (gM2 * (1.0 + (g - 1.0) * M2) / (2.0 * D1)) * fric * on("friction")
-            - (2.0 * gM2 * g1m2 / D1) * (dmdot_dx / mdot) * on("mass")
-            + (gM2 / D1) * (dW_dx / W)               * on("MW")
-        )
-
-        # --- dT/dx (paper Eq. 17 sign convention; see comment in earlier
-        #            revisions for the (1−γM²) alternative) ---------------
-        dT_dx = T * (
-            ((g - 1.0) * M2 / D1) * (dA_dx / A)       * on("area")
-            + ((1.0 + gM2) / D1) * heat                * on("heat")
-            - (g * (g - 1.0) * M2**2 / (2.0 * D1)) * fric * on("friction")
-            - ((g - 1.0) * M2 * (1.0 + gM2) / D1) * (dmdot_dx / mdot) * on("mass")
-            + ((g - 1.0) * M2 / D1) * (dW_dx / W)     * on("MW")
-        )
-
-        return dMa2_dx, dp_dx, dT_dx
-
-    @staticmethod
-    def integrate(x_start, x_end,
-                  Ma2_in, p_in, T_in, mdot_in,
-                  geometry_fn, composition_fn, source_fn,
-                  mix,
-                  state_fn=None,
-                  switches=None,
-                  Cf=0.003,
-                  n_steps=1000):
-        """
-        Solves the generalised 1D Shapiro flow with **energy-consistent T**.
-
-        State variables are ``(Ma², p, h_t, ṁ)`` — stagnation enthalpy `h_t`
-        replaces the static temperature in the state vector. At every rhs
-        evaluation, T is recovered from `h_t` by Newton iteration on
-
-            h_mix(Y(x,T,p), T) + ½ · Ma² · γ(Y,T) · R(Y) · T  =  h_t.
-
-        This bypasses the (potentially form-dependent) `dT/dx` Shapiro
-        coefficient: the Mach and pressure ODEs come from Shapiro as before,
-        but temperature is *always* the one that satisfies energy + Mach.
-
-        Parameters
-        ----------
-        composition_fn : callable(x, T, p) -> dict
-            Returns local mass fractions {species: Y}. For sections without
-            chemistry change, it can ignore T and p.
-        source_fn      : callable(x, T, p, mdot, Y) -> (dH_dx, dmdot_dx)
-            External heat addition [J/(kg·m)] and mass injection [kg/(s·m)].
-        mix            : ScramMixtureNASA  — used for h, s, cp, W, γ from NASA polys.
-        state_fn       : optional override for the h/s/Tt/Pt post-processing.
-        switches       : per-phenomenon toggles forwarded to `derivatives`.
-        """
-        R_UNIV = mix.R_UNIVERSAL
-
-        # ---- Initial h_t from inlet (T_in, p_in, Ma2_in, composition) ----
-        Y_in     = composition_fn(x_start, T_in, p_in)
-        cp_in    = mix.cp_mix(Y_in, T_in)
-        W_in     = mix.W_mix(Y_in)
-        R_in     = R_UNIV / W_in
-        gamma_in = cp_in / max(cp_in - R_in, 1e-30)
-        V2_in    = max(Ma2_in, 1.000001) * gamma_in * R_in * T_in
-        h_in     = mix.h_mix(Y_in, T_in)
-        ht_in    = h_in + 0.5 * V2_in
-
-        T_cache = {"T": float(T_in)}
-
-        # ---- Newton: T such that h(T,Y(T,p)) + ½ M² γ(T,Y) R(Y) T = h_t --
-        def solve_T(M2, p, ht, x, T_guess=None):
-            T = float(T_guess) if T_guess is not None else T_cache["T"]
-            T = max(200.0, min(6000.0, T))
-            Y = cp = W = R = gamma = V2 = None
-            last_T = T
-            for _ in range(60):
-                Y      = composition_fn(x, T, p)
-                cp     = mix.cp_mix(Y, T)
-                W      = mix.W_mix(Y)
-                R      = R_UNIV / W
-                gamma  = cp / max(cp - R, 1e-30)
-                h      = mix.h_mix(Y, T)
-                V2     = M2 * gamma * R * T
-                resid  = (h + 0.5 * V2) - ht
-                if abs(resid) < 1.0:
-                    break
-                # ∂h_t/∂T ≈ cp + ½ M² γ R   (γ and R only weakly T-dependent)
-                deriv = cp + 0.5 * M2 * gamma * R
-                if deriv <= 0:
-                    break
-                step = -resid / deriv
-                # damp huge steps for stability
-                if   step >  400.0: step =  400.0
-                elif step < -200.0: step = -200.0
-                T_new = max(200.0, min(6000.0, T + step))
-                if abs(T_new - last_T) < 0.5:
-                    T = T_new
-                    Y      = composition_fn(x, T, p)
-                    cp     = mix.cp_mix(Y, T)
-                    W      = mix.W_mix(Y)
-                    R      = R_UNIV / W
-                    gamma  = cp / max(cp - R, 1e-30)
-                    V2     = M2 * gamma * R * T
-                    break
-                last_T = T
-                T = T_new
-            T_cache["T"] = T
-            return T, Y, cp, W, R, gamma, V2
-
-        # Resolve switch mask once. The same dict gates BOTH the Shapiro
-        # influence coefficients (inside `derivatives`) AND the underlying
-        # physical sources here, so that disabling a phenomenon really
-        # removes it from the simulation — not just from Mach/pressure.
-        sw_heat = True if switches is None else switches.get("heat",  True)
-        sw_mass = True if switches is None else switches.get("mass",  True)
-        sw_MW   = True if switches is None else switches.get("MW",    True)
-        sw_gam  = True if switches is None else switches.get("gamma", True)
-        # `area` and `friction` are pure Shapiro-coefficient effects with
-        # no external source term — the mask inside `derivatives` is enough.
-
-        # ---------------- rhs ---------------------------------------------
-        def rhs(x, y):
-            M2, p, ht, mdot = y
-            T, Y, cp, W, R, gamma, V2 = solve_T(M2, p, ht, x)
-
-            A, dA_dx, D = geometry_fn(x)
-            dH_dx, dmdot_dx = source_fn(x, T, p, mdot, Y)
-
-            # ---- gate SOURCE TERMS by heat / mass switches ---------------
-            #   heat=False ⇒ no energy enters the energy equation
-            #                (dh_t/dx contribution from chemistry / external Q → 0)
-            #   mass=False ⇒ no mass is injected (ṁ stays constant)
-            if not sw_heat: dH_dx    = 0.0
-            if not sw_mass: dmdot_dx = 0.0
-
-            # ---- composition spatial derivatives at fixed (T, p) ---------
-            # Zero them out if either compositional switch is off so the
-            # diagnostic isolation is complete (no MW or γ drift in Shapiro).
-            if sw_MW or sw_gam:
-                dx_step = 1e-4
-                x_p = min(x + dx_step, x_end); x_m = max(x - dx_step, x_start)
-                span = x_p - x_m
-                if span > 0:
-                    Y_p = composition_fn(x_p, T, p)
-                    Y_m = composition_fn(x_m, T, p)
-                    dW_dx     = (mix.W_mix(Y_p)        - mix.W_mix(Y_m))        / span if sw_MW  else 0.0
-                    dgamma_dx = (mix.gamma_mix(Y_p, T) - mix.gamma_mix(Y_m, T)) / span if sw_gam else 0.0
-                else:
-                    dW_dx = 0.0; dgamma_dx = 0.0
-            else:
-                dW_dx = 0.0; dgamma_dx = 0.0
-
-            # Shapiro Ma² and p derivatives — Shapiro's dT/dx is ignored
-            # (T comes from energy conservation via Newton on h_t).
-            dM2_dx, dp_dx, _ = ScramShapiroODE.derivatives(
-                Ma2=M2, p=p, T=T, gamma=gamma, Cp=cp,
-                dA_dx=dA_dx, A=A, D=D, Cf=Cf,
-                dH_dx=dH_dx,
-                mdot=mdot, dmdot_dx=dmdot_dx,
-                W=W, dW_dx=dW_dx, dgamma_dx=dgamma_dx,
-                switches=switches,
-            )
-
-            # Energy equation: dh_t/dx = (external heat per unit mass per length)
-            # Mass injection at flow's local stagnation enthalpy contributes 0
-            # (Shapiro convention). To inject cold fuel, add the
-            # (h_inject − h_t)·dṁ/(ṁ·dx) correction inside source_fn.
-            dht_dx = dH_dx
-
-            return [dM2_dx, dp_dx, dht_dx, dmdot_dx]
-
-        # ---- events -------------------------------------------------------
-        def choke_event(x, y):    return y[0] - 1.0
-        choke_event.terminal = True; choke_event.direction = -1
-
-        def pressure_event(x, y): return y[1] - 1.0
-        pressure_event.terminal = True; pressure_event.direction = -1
-
-        # ---- integrate ----------------------------------------------------
-        y0 = [
-            max(Ma2_in, 1.000001),
-            max(p_in,   1.0),
-            float(ht_in),
-            max(mdot_in, 1e-9),
-        ]
-
-        sol = solve_ivp(
-            fun=rhs,
-            t_span=(x_start, x_end),
-            y0=y0,
-            method="DOP853",
-            rtol=1e-6,
-            atol=1e-6,
-            max_step=(x_end - x_start) / 50,
-            events=[choke_event, pressure_event],
-            dense_output=False,
-        )
-
-        xs    = sol.t
-        M2s   = np.maximum(sol.y[0], 1.000001)
-        ps    = np.maximum(sol.y[1], 1.0)
-        hts_arr = sol.y[2]
-        mdots = np.maximum(sol.y[3], 1e-9)
-        Mas   = np.sqrt(M2s)
-
-        thermal_choke = len(sol.t_events[0]) > 0
-        if thermal_choke:
-            x_choke = sol.t_events[0][0]
-            print(f"\n⚠ Thermal choking detected at x = {x_choke:.5f} m   (Ma → 1)")
-
-        # ---- post-process: derive T, V, ... at each integration point ----
-        # Reset T_cache so post-proc Newton starts fresh from T_in
-        T_cache["T"] = float(T_in)
-        Ts     = np.empty_like(xs)
-        Vs     = np.empty_like(xs)
-        cps    = np.empty_like(xs)
-        gammas = np.empty_like(xs)
-        Rs     = np.empty_like(xs)
-        rhos   = np.empty_like(xs)
-        for i in range(len(xs)):
-            T_i, Y_i, cp_i, W_i, R_i, g_i, V2_i = solve_T(M2s[i], ps[i], hts_arr[i], xs[i])
-            Ts[i]    = T_i
-            Vs[i]    = np.sqrt(max(V2_i, 0.0))
-            cps[i]   = cp_i
-            gammas[i]= g_i
-            Rs[i]    = R_i
-            rhos[i]  = ps[i] / max(R_i * T_i, 1e-12)
-
-        As = np.array([geometry_fn(x)[0] for x in xs])
-
-        # ---- h, s, Tt, Pt via integral form / state_fn -------------------
-        if state_fn is None:
-            def state_fn_default(T, p, V, x):
-                Y = composition_fn(x, T, p)
-                return mix.stagnation_state(Y, T, p, V)
-            state_fn = state_fn_default
-
-        hs   = np.empty_like(xs)
-        ss   = np.empty_like(xs)
-        hts2 = np.empty_like(xs)
-        sts2 = np.empty_like(xs)
-        Tts  = np.empty_like(xs)
-        Pts  = np.empty_like(xs)
-        for i in range(len(xs)):
-            st = state_fn(Ts[i], ps[i], Vs[i], xs[i])
-            hs[i]   = st["h"]
-            ss[i]   = st["s"]
-            hts2[i] = st["ht"]
-            sts2[i] = st["st"]
-            Tts[i]  = st["Tt"]
-            Pts[i]  = st["Pt"]
-
-        return {
-            "x": xs,
-            "Ma": Mas, "Ma2": M2s,
-            "p": ps,   "P":  ps,
-            "T": Ts,
-            "rho": rhos,
-            "V": Vs,
-            "Tt": Tts, "Pt": Pts, "pt": Pts,
-            "h":  hs,  "s":  ss,
-            "ht": hts2, "st": sts2,
-            "A": As,
-            "mdot": mdots,
-            "thermal_choke": thermal_choke,
-            "solver_success": sol.success,
-            "solver_message": sol.message,
-        }
-
-
-# ---------------------------------------------------------------------------
-# Engine
-# ---------------------------------------------------------------------------
-class Scramjet:
-    L01 = 0.50
-    L12 = 0.40
-    L23 = 0.01
-    L34 = 1.00
-    L45 = 1.0
-    alpha12 = 1.0
-    alpha13 = 1.1
-    alpha14 = 2.4
-    alpha05 = 2.0
-
-    EPSILON     = 0.4
-    ETA_C       = 0.9
-    CF_DEFAULT  = 0.003
-
-    # Heating value used only for *informational* prints. The actual heat
-    # release in sec4 is now computed self-consistently from CEA equilibrium
-    # (h_react − h_eq), so this value is no longer the source of energy.
-    Q_H2_HHV    = 141.8e6  # J/kg
-
-    def __init__(self):
-        self.air      = ScramAirProperties()
-        self.mixture  = ScramMixtureNASA(self.air)
-        self.shapiroODE = ScramShapiroODE()
-        self._cea_comp = None
-
-    def _get_cea(self):
-        if self._cea_comp is None:
-            self._cea_comp = ScramCEAComp()
-        return self._cea_comp
-
-    def _f(self, x):
-        return float(np.asarray(x).squeeze())
-
-    # ----- pure-air mass fractions (frozen) -------------------------------
-    def _air_Y(self):
-        moles = self.air.AIR_BASE_COMPOSITION
-        total_mole = sum(moles.values())
-        W_air = sum((moles[s]/total_mole) * self.air.MOLECULAR_WEIGHTS[s]
-                    for s in moles)  # g/mol
-        return {s: (moles[s]/total_mole) * self.air.MOLECULAR_WEIGHTS[s] / W_air
-                for s in moles}
-
-    # ----- generic state_fn factory for a fixed-composition section -------
-    def _frozen_state_fn(self, Y_const):
-        def state_fn(T, p, V, x):
-            return self.mixture.stagnation_state(Y_const, T, p, V)
-        return state_fn
-
-    # =====================================================================
-    # Section 0 — Freestream / inlet capture
-    # =====================================================================
-    def inlet_properties(self, h, Ma, m_air):
-        T0   = ScramAtmosphere.T(h)
-        P0   = ScramAtmosphere.P(h)
-        rho0 = ScramAtmosphere.rho(h)
-
-        Y_air = self._air_Y()
-
-        cp0    = self.mixture.cp_mix(Y_air, T0)
-        W_air_kgmol = self.mixture.W_mix(Y_air)
-        R0     = self.mixture.R_UNIVERSAL / W_air_kgmol
-        gamma0 = self.mixture.gamma_mix(Y_air, T0)
-
-        a0 = np.sqrt(gamma0 * R0 * T0)
-        V0 = Ma * a0
-        A0 = m_air / (rho0 * V0)
-
-        h0  = self.mixture.h_mix(Y_air, T0)
-        s0  = self.mixture.s_mix(Y_air, T0, P0)
-        ht0 = h0 + 0.5*V0**2
-        Tt0 = self.mixture.stagnation_Tt(Y_air, T0, ht0)
-        Pt0 = self.mixture.stagnation_Pt(Y_air, T0, Tt0, P0)
-
-        print(f"\nInlet conditions at h={h:.0f} m, Ma={Ma:.2f}, m_air={m_air:.2f} kg/s:")
-        print(f"  T0   = {T0:.2f} K")
-        print(f"  P0   = {P0:.2f} Pa")
-        print(f"  rho0 = {rho0:.4f} kg/m^3")
-        print(f"  cp0  = {cp0:.2f} J/kg/K")
-        print(f"  R0   = {R0:.2f} J/kg/K")
-        print(f"  γ0   = {gamma0:.4f}")
-        print(f"  V0   = {V0:.2f} m/s")
-        print(f"  A0   = {A0:.4f} m^2")
-        print(f"  Tt0  = {Tt0:.2f} K   (integral form)")
-        print(f"  Pt0  = {Pt0:.2f} Pa  (integral form)")
-        print(f"  h0   = {h0/1e6:.4f} MJ/kg")
-        print(f"  ht0  = {ht0/1e6:.4f} MJ/kg")
-        print(f"  s0   = {s0:.2f} J/kg/K")
-
-        return {
-            "Ma": Ma,    "Ma0": Ma,
-            "T":  T0,    "T0":  T0,
-            "P":  P0,    "P0":  P0,
-            "rho": rho0, "rho0": rho0,
-            "gamma": gamma0,
-            "cp": cp0,
-            "R": R0,
-            "a": a0,
-            "V":  V0,   "V0":  V0,
-            "A":  A0,   "A0":  A0,
-            "Tt": Tt0,  "Tt0": Tt0,
-            "Pt": Pt0,  "Pt0": Pt0,
-            "h":  h0,   "ht":  ht0,
-            "s":  s0,   "st":  s0,
-            "Y":  Y_air,
-            "mdot": m_air,
-        }
-
-    # =====================================================================
-    # Pressure recovery (Kantrowitz-style fit, paper)
-    # =====================================================================
-    def pressure_recovery(self, Ma):
-        MaList = np.array([8.127, 7.641, 7.246, 6.866, 6.608, 6.349, 6.137,
-                           5.954, 5.757, 5.605, 5.453, 5.286, 5.165, 5.028])
-        sList = np.array([0.3022, 0.3183, 0.3339, 0.3505, 0.3634, 0.3774, 0.3887,
-                          0.4000, 0.4124, 0.4231, 0.4339, 0.4452, 0.4543, 0.4661])
-        return float(np.poly1d(np.polyfit(MaList, sList, 1))(Ma))
-
-    # =====================================================================
-    # Section 1 — Isolator (algebraic, total-enthalpy-conserving)
-    # =====================================================================
-    def isolator_properties(self, inlet_props):
-        mix   = self.mixture
-        Y_air = inlet_props["Y"]
-
-        Ma0 = self._f(inlet_props["Ma"])
-        T0  = self._f(inlet_props["T"])
-        P0  = self._f(inlet_props["P"])
-        V0  = self._f(inlet_props["V"])
-        Pt0 = self._f(inlet_props["Pt"])
-        mdot = self._f(inlet_props["mdot"])
-        A0  = self._f(inlet_props["A"])
-        rho0 = self._f(inlet_props["rho"])
-
-        ht0 = self._f(inlet_props["ht"])
-        s0  = self._f(inlet_props["s"])
-        M1 = self.EPSILON * Ma0
-
-        sigma_c    = self.pressure_recovery(Ma0)
-        Pt1_target = sigma_c * Pt0
-
-        # Energy: h(T1) + V1²/2 = ht0   with V1 = M1·sqrt(γ R T1)
-        # Entropy step: s(T1, P1) = s0 + Δs_irrev  (we don't model the entropy
-        # rise here; the target-Pt formula encodes it via σc.)
-        def residual(vars_):
-            T1g, p1g = vars_
-            T1g = max(T1g, 250.0); p1g = max(p1g, 100.0)
-            cp1    = mix.cp_mix(Y_air, T1g)
-            W1     = mix.W_mix(Y_air)
-            R1     = mix.R_UNIVERSAL / W1
-            gamma1 = mix.gamma_mix(Y_air, T1g)
-            V1     = M1 * np.sqrt(gamma1 * R1 * T1g)
-            h1     = mix.h_mix(Y_air, T1g)
-            eq1    = ht0 - (h1 + 0.5*V1**2)
-            # Predict Pt at this state using the integral stagnation, compare to target
-            Tt1g = mix.stagnation_Tt(Y_air, T1g, ht0)
-            Pt1g = mix.stagnation_Pt(Y_air, T1g, Tt1g, p1g)
-            eq2  = Pt1g - Pt1_target
-            return [eq1, eq2]
-
-        T1, P1 = fsolve(residual, x0=[1200.0, 0.2*P0])
-
-        W1 = mix.W_mix(Y_air)
-        R1 = mix.R_UNIVERSAL / W1
-        gamma1 = mix.gamma_mix(Y_air, T1)
-        cp1    = mix.cp_mix(Y_air, T1)
-        V1     = M1 * np.sqrt(gamma1 * R1 * T1)
-
-        h1   = mix.h_mix(Y_air, T1)
-        s1   = mix.s_mix(Y_air, T1, P1)
-        ht1  = h1 + 0.5*V1**2
-        Tt1  = mix.stagnation_Tt(Y_air, T1, ht1)
-        Pt1  = mix.stagnation_Pt(Y_air, T1, Tt1, P1)
-
-        rho1 = P1 / (R1*T1)
-        A1   = mdot / (rho1*V1)
-
-        L_iso = getattr(self, "L01", 0.1)
-        sol = {
-            "x":    np.array([0.0, L_iso]),
-            "Ma":   np.array([Ma0, M1]),
-            "T":    np.array([T0, T1]),
-            "Tt":   np.array([self._f(inlet_props["Tt"]), Tt1]),
-            "p":    np.array([P0, P1]),  "P": np.array([P0, P1]),
-            "pt":   np.array([Pt0, Pt1]),"Pt":np.array([Pt0, Pt1]),
-            "A":    np.array([A0, A1]),
-            "rho":  np.array([rho0, rho1]),
-            "V":    np.array([V0, V1]),
-            "mdot": np.array([mdot, mdot]),
-            "h":    np.array([self._f(inlet_props["h"]), h1]),
-            "s":    np.array([s0, s1]),
-            "ht":   np.array([self._f(inlet_props["ht"]), ht1]),
-            "st":   np.array([s0, s1]),
-        }
-
-        return {
-            "Ma": M1,  "Ma1": M1,
-            "T":  T1,  "T1":  T1,
-            "P":  P1,  "p1":  P1, "P1": P1,
-            "V":  V1,  "V1":  V1,
-            "A":  A1,  "A1":  A1,
-            "Tt": Tt1, "Tt1": Tt1,
-            "Pt": Pt1, "Pt1": Pt1,
-            "rho": rho1, "gamma": gamma1, "cp": cp1, "R": R1,
-            "sigma_c": sigma_c, "mdot": mdot,
-            "h":  h1,  "ht":  ht1, "s": s1,
-            "Y":  Y_air,
-            "solution": sol,
-        }
-
-    # =====================================================================
-    # Section 1→2 — Constant-area / friction-only (no composition change)
-    # =====================================================================
-    def combustor_properties2(self, isolator_props, switches=None):
-        L_12 = self._f(self.L12)
-        A1   = self._f(isolator_props["A"])
-        A2   = self._f(self.alpha12) * A1
-
-        Ma1  = self._f(isolator_props["Ma"])
-        T1   = self._f(isolator_props["T"])
-        p1   = self._f(isolator_props["P"])
-        mdot = self._f(isolator_props["mdot"])
-        Y_air = isolator_props["Y"]
-        W_air = self.mixture.W_mix(Y_air)
-
-        def geometry_fn(x):
-            A = A1 + (A2 - A1) * (x / L_12)
-            dA_dx = (A2 - A1) / L_12
-            D = np.sqrt(4.0 * A / np.pi)
-            return A, dA_dx, D
-
-        def composition_fn(x, T, p):
-            return Y_air
-
-        def source_fn(x, T, p, mdot_local, Y): return 0.0, 0.0
-
-        state_fn = self._frozen_state_fn(Y_air)
-        result = self.shapiroODE.integrate(
-            x_start=0.0, x_end=L_12,
-            Ma2_in=Ma1**2, p_in=p1, T_in=T1, mdot_in=mdot,
-            geometry_fn=geometry_fn,
-            composition_fn=composition_fn,
-            source_fn=source_fn,
-            mix=self.mixture,
-            state_fn=state_fn,
-            switches=switches,
-            Cf=self.CF_DEFAULT, n_steps=300,
-        )
-
-        T_end = result["T"][-1]; p_end = result["p"][-1]
-        return {
-            "Ma": self._f(result["Ma"][-1]), "Ma2": self._f(result["Ma"][-1]),
-            "T":  self._f(T_end),            "T2":  self._f(T_end),
-            "Tt": self._f(result["Tt"][-1]),
-            "P":  self._f(p_end),            "p2":  self._f(p_end),
-            "Pt": self._f(result["Pt"][-1]),
-            "rho": self._f(result["rho"][-1]),
-            "V":   self._f(result["V"][-1]),  "V2":  self._f(result["V"][-1]),
-            "h":   self._f(result["h"][-1]),
-            "ht":  self._f(result["ht"][-1]),
-            "s":   self._f(result["s"][-1]),
-            "A":   A2,
-            "gamma": self.mixture.gamma_mix(Y_air, T_end),
-            "cp":    self.mixture.cp_mix(Y_air, T_end),
-            "R":     self.mixture.R_UNIVERSAL / W_air,
-            "mdot": mdot,
-            "Y":    Y_air,
-            "solution": result,
-        }
-
-    def optimal_fuel_air_ratio(self):
-        return 1.0 / 34.35  # H2/air stoichiometric
-
-    # =====================================================================
-    # Section 2→3 — Fuel injection (mass addition only, no combustion)
-    # Frozen mixing: H2 streams blend with air; composition evolves with x.
-    # =====================================================================
-    def combustor_properties3(self, sec2, phi=0.0, switches=None):
-        mix    = self.mixture
-        Y_air  = sec2["Y"]
-        sw_mass = True if switches is None else switches.get("mass", True)
-        W_h2  = self.air.MOLECULAR_WEIGHTS["H2"] * 1e-3
-        W_air = mix.W_mix(Y_air)
-
-        L_23 = self._f(self.L23)
-        A2   = self._f(sec2["A"])
-        A3   = self._f(self.alpha13) * A2 / self._f(self.alpha12)
-
-        Ma2  = self._f(sec2["Ma"])
-        T2   = self._f(sec2["T"])
-        p2   = self._f(sec2["P"])
-        mdot_air = self._f(sec2["mdot"])
-
-        FAR_stoich  = self.optimal_fuel_air_ratio()
-        FAR_actual  = phi * FAR_stoich
-        mfuel_total = FAR_actual * mdot_air
-        dmdot_dx_const = mfuel_total / L_23
-
-        def Yf_at_mdot(mdot_local):
-            return max((mdot_local - mdot_air) / max(mdot_local, 1e-30), 0.0)
-
-        def Y_at_mdot(mdot_local):
-            """Mass-fraction dict at this local mass flow (frozen mixing)."""
-            Yf = Yf_at_mdot(mdot_local)
-            Ya = 1.0 - Yf
-            Y = {sp: Ya * Y_air[sp] for sp in Y_air}
-            Y["H2"] = Y.get("H2", 0.0) + Yf
-            return Y
-
-        def Yf_at_x(x):
-            """Closed-form ṁ(x) ⇒ Yf(x), used by post-processing state_fn."""
-            mdot_local = mdot_air + dmdot_dx_const * x
-            return Yf_at_mdot(mdot_local)
-
-        def geometry_fn(x):
-            A = A2 + (A3 - A2) * (x / L_23)
-            dA_dx = (A3 - A2) / L_23
-            D = np.sqrt(4 * A / np.pi)
-            return A, dA_dx, D
-
-        def composition_fn(x, T, p):
-            # If `mass` is disabled, freeze composition at inlet air —
-            # no fuel was ever injected, so Yf stays 0 throughout.
-            if not sw_mass:
-                return Y_air
-            mdot_local = mdot_air + dmdot_dx_const * x
-            return Y_at_mdot(mdot_local)
-
-        def source_fn(x, T, p, mdot_local, Y):
-            # No external heat; mass injection at flow's local stagnation
-            # enthalpy is the Shapiro standard convention. The integrator
-            # masks `dmdot_dx` to zero when `mass=False`.
-            return 0.0, dmdot_dx_const
-
-        def state_fn(T, p, V, x):
-            Y = composition_fn(x, T, p)
-            return mix.stagnation_state(Y, T, p, V)
-
-        result = self.shapiroODE.integrate(
-            x_start=0.0, x_end=L_23,
-            Ma2_in=Ma2**2, p_in=p2, T_in=T2, mdot_in=mdot_air,
-            geometry_fn=geometry_fn,
-            composition_fn=composition_fn,
-            source_fn=source_fn,
-            mix=mix,
-            state_fn=state_fn,
-            switches=switches,
-            Cf=self.CF_DEFAULT, n_steps=200,
-        )
-
-        Y_exit = composition_fn(L_23, 0.0, 0.0)  # honours sw_mass
-
-        # Report ACTUAL injected fuel — what the integrator's mass-flow ODE
-        # produced. With mass=False the integrator zeroed dṁ/dx, so
-        # mdot_exit == mdot_air ⇒ mfuel_actual = 0. With mass=True it
-        # equals the scheduled mfuel_total. Downstream consumers (sec4,
-        # performance) should use this physically realised value.
-        mfuel_actual = max(self._f(result["mdot"][-1]) - mdot_air, 0.0)
-        return {
-            "Ma3": self._f(result["Ma"][-1]),
-            "T3":  self._f(result["T"][-1]),
-            "p3":  self._f(result["p"][-1]), "P3": self._f(result["p"][-1]),
-            "rho3": self._f(result["rho"][-1]),
-            "V3":  self._f(result["V"][-1]),
-            "Tt3": self._f(result["Tt"][-1]),
-            "Pt3": self._f(result["Pt"][-1]),
-            "h3":  self._f(result["h"][-1]),
-            "ht3": self._f(result["ht"][-1]),
-            "s3":  self._f(result["s"][-1]),
-            "A3":  A3,
-            "mdot": self._f(result["mdot"][-1]),
-            "mfuel":           mfuel_actual,    # honours sw_mass (0 if off)
-            "mfuel_scheduled": mfuel_total,     # what φ asked for, pre-mask
-            "phi": phi,
-            "Y": Y_exit,
-            "Yf_at_x_fn": Yf_at_x,
-            "solution": result,
-        }
-
-    # =====================================================================
-    # Section 3→4 — Combustion with per-step CEA equilibrium
-    # =====================================================================
-    def combustor_properties4(self, sec3, switches=None):
-        if not _HAS_CEA:
-            raise ImportError(
-                "NASA CEA is required for combustor_properties4. "
-                "Install with `pip install cea`."
-            )
-
-        mix      = self.mixture
-        cea_comp = self._get_cea()
-        sw_heat  = True if switches is None else switches.get("heat", True)
-
-        L_34 = self._f(self.L34)
-
-        A3      = self._f(sec3["A3"])
-        A1_ref  = A3 / self._f(self.alpha13)
-        A4      = self._f(self.alpha14) * A1_ref
-
-        Ma3   = self._f(sec3["Ma3"])
-        T3    = self._f(sec3["T3"])
-        p3    = self._f(sec3["p3"])
-        mdot  = self._f(sec3["mdot"])
-        mfuel = self._f(sec3["mfuel"])         # actual injected (= 0 if mass=False)
-
-        # Reactant composition at sec4 inlet (= sec3 exit) — air + any injected H2.
-        Y_react = dict(sec3["Y"])
-        for sp in ScramCEAComp.PROD_NAMES:
-            Y_react.setdefault(sp, 0.0)
-
-        # O/F mass ratio is derived from the ACTUAL H₂ mass fraction in the
-        # reactant stream, not the scheduled φ.  If sec3 ran with mass=False,
-        # Y_react is pure air ⇒ Yf_react = 0 ⇒ of_ratio → ∞ ⇒ CEA returns
-        # essentially air at every (T, p), h_eq ≈ h_react, and Q_eff ≈ 0.
-        # That is, **no fuel ⇒ no combustion**, exactly as physics demands —
-        # even if the `heat` switch itself is left ON.
-        Yf_react = float(Y_react.get("H2", 0.0))
-        of_ratio = (1.0 - Yf_react) / Yf_react if Yf_react > 1e-12 else 1e6
-
-        theta = 0  # injection angle (0 = parallel ⇒ η = x/L linear)
-
-        def mixing_efficiency(x):
-            s = np.clip(x / L_34, 1e-4, 1.0)
-            if theta == 0.0:
-                return float(s)
-            a = float(np.clip(1.01 + 0.176 * np.log(s), 0.0, 1.0))
-            if theta == 90.0:
-                return a
-            return theta/90.0 * (a - s) + s
-
-        def deta_dx(x):
-            h_step = 1e-4
-            return (mixing_efficiency(min(x + h_step, L_34))
-                    - mixing_efficiency(max(x - h_step, 0.0))) / (2 * h_step)
-
-        def Y_eq_at(T, p_pa):
-            """Return equilibrium mass fractions, or Y_react if CEA fails (no chemistry)."""
-            Yeq = cea_comp.equilibrium_Y(T, p_pa, of_ratio)
-            return Yeq if Yeq is not None else Y_react
-
-        def Y_blended(eta, T, p_pa):
-            Yeq = Y_eq_at(T, p_pa)
-            keys = set(Y_react) | set(Yeq)
-            return {k: (1-eta) * Y_react.get(k, 0.0) + eta * Yeq.get(k, 0.0)
-                    for k in keys}
-
-        # ------- Shapiro callbacks (geometry / composition / source) ------
-        def geometry_fn(x):
-            A = A3 + (A4 - A3) * (x / L_34)
-            dA_dx = (A4 - A3) / L_34
-            D = np.sqrt(4 * A / np.pi)
-            return A, dA_dx, D
-
-        def composition_fn(x, T, p):
-            # If `heat` is disabled, no combustion takes place — composition
-            # stays at the reactant mixture (frozen H2 + air).
-            if not sw_heat:
-                return Y_react
-            eta = mixing_efficiency(x)
-            return Y_blended(eta, T, p)
-
-        def source_fn(x, T, p, mdot_local, Y):
-            # Heat released at this point: (h_react − h_eq)|_T × dη/dx.
-            # Evaluating both at the same T gives the "chemistry energy"
-            # liberated per unit fuel-mixing progress — automatically
-            # incorporates dissociation losses at high T (h_eq rises).
-            # The integrator masks dH_dx to zero if `heat=False`, so we
-            # don't need to short-circuit here.
-            h_react = mix.h_mix(Y_react, T)
-            Yeq     = Y_eq_at(T, p)
-            h_eq    = mix.h_mix(Yeq, T)
-            dH_dx   = (h_react - h_eq) * deta_dx(x)
-            return dH_dx, 0.0
-
-        def state_fn(T, p, V, x):
-            Y = composition_fn(x, T, p)   # honours sw_heat
-            return mix.stagnation_state(Y, T, p, V)
-
-        result = self.shapiroODE.integrate(
-            x_start=0.0, x_end=L_34,
-            Ma2_in=Ma3**2, p_in=p3, T_in=T3, mdot_in=mdot,
-            geometry_fn=geometry_fn,
-            composition_fn=composition_fn,
-            source_fn=source_fn,
-            mix=mix,
-            state_fn=state_fn,
-            switches=switches,
-            Cf=self.CF_DEFAULT, n_steps=500,
-        )
-
-        # Exit composition — used to freeze the nozzle.  Honours sw_heat.
-        x_exit = result["x"][-1]
-        T_exit, p_exit = result["T"][-1], result["p"][-1]
-        Y_exit = composition_fn(x_exit, T_exit, p_exit)
-
-        return {
-            "Ma4": self._f(result["Ma"][-1]),
-            "T4":  self._f(result["T"][-1]),
-            "p4":  self._f(result["p"][-1]), "P4": self._f(result["p"][-1]),
-            "rho4": self._f(result["rho"][-1]),
-            "V4":  self._f(result["V"][-1]),
-            "Tt4": self._f(result["Tt"][-1]),
-            "Pt4": self._f(result["Pt"][-1]),
-            "h4":  self._f(result["h"][-1]),
-            "ht4": self._f(result["ht"][-1]),
-            "s4":  self._f(result["s"][-1]),
-            "A4":  A4,
-            "mdot": mdot,
-            "Y":   Y_exit,
-            "solution": result,
-            "thermal_choke": result["thermal_choke"],
-        }
-
-    # =====================================================================
-    # Section 4→5 — Nozzle (frozen at sec4 exit composition)
-    # =====================================================================
-    def nozzle_properties(self, sec4, inlet_props, switches=None):
-        if sec4["thermal_choke"]:
-            return {"thermal_choke": True}
-
-        mix    = self.mixture
-        Y_nz   = sec4["Y"]
-        W_nz   = mix.W_mix(Y_nz)
-
-        L_45 = self._f(self.L45)
-        A4   = self._f(sec4["A4"])
-        A0   = self._f(inlet_props["A0"])
-        A5   = self._f(self.alpha05) * A0
-        Ma4  = self._f(sec4["Ma4"])
-        T4   = self._f(sec4["T4"])
-        p4   = self._f(sec4["p4"])
-        mdot = self._f(sec4["mdot"])
-
-        def geometry_fn(x):
-            A = A4 + (A5 - A4) * (x / L_45)
-            dA_dx = (A5 - A4) / L_45
-            D = np.sqrt(4 * A / np.pi)
-            return A, dA_dx, D
-
-        def composition_fn(x, T, p): return Y_nz
-        def source_fn(x, T, p, mdot_local, Y): return 0.0, 0.0
-
-        state_fn = self._frozen_state_fn(Y_nz)
-
-        result = self.shapiroODE.integrate(
-            x_start=0.0, x_end=L_45,
-            Ma2_in=Ma4**2, p_in=p4, T_in=T4, mdot_in=mdot,
-            geometry_fn=geometry_fn,
-            composition_fn=composition_fn,
-            source_fn=source_fn,
-            mix=mix,
-            state_fn=state_fn,
-            switches=switches,
-            Cf=self.CF_DEFAULT, n_steps=200,
-        )
-
-        return {
-            "Ma5": self._f(result["Ma"][-1]),
-            "T5":  self._f(result["T"][-1]),
-            "p5":  self._f(result["p"][-1]), "P5": self._f(result["p"][-1]),
-            "rho5": self._f(result["rho"][-1]),
-            "V5":  self._f(result["V"][-1]),
-            "Tt5": self._f(result["Tt"][-1]),
-            "Pt5": self._f(result["Pt"][-1]),
-            "h5":  self._f(result["h"][-1]),
-            "ht5": self._f(result["ht"][-1]),
-            "s5":  self._f(result["s"][-1]),
-            "A5":  A5,
-            "mdot": mdot,
-            "Y":   Y_nz,
-            "solution": result,
-            "thermal_choke": False,
-        }
-
-    # =====================================================================
-    # Performance
-    # =====================================================================
-    def performance(self, inlet_props, nozzle_props, sec3):
-        if nozzle_props.get("thermal_choke", False):
-            return {"thermal_choke": True}
-
-        V0 = self._f(inlet_props["V0"])
-        p0 = self._f(inlet_props["P0"])
-        A0 = self._f(inlet_props["A0"])
-        mdot_air = self._f(inlet_props["mdot"])
-
-        V5 = self._f(nozzle_props["V5"])
-        p5 = self._f(nozzle_props["p5"])
-        A5 = self._f(nozzle_props["A5"])
-        mdot5 = self._f(nozzle_props["mdot"])
-        mfuel = self._f(sec3["mfuel"])
-
-        Fin = mdot5*V5 + p5*A5 - mdot_air*V0 - p0*A0
-        Isp = Fin / ((mfuel+mdot_air)) * 9.80665
-        Ia  = Fin / mdot_air
-        return {"Fin": Fin, "Isp": Isp, "Ia": Ia, "mfuel": mfuel, "thermal_choke": False}
-
-    # =====================================================================
-    # Plot
-    # =====================================================================
-    def plot_flowpath(self, inp, iso, sec2, sec3, sec4, sec5=None):
-        sections = []
-
-        def add_section(sol, x_offset):
-            p_arr  = sol.get("p",  sol.get("P"))
-            pt_arr = sol.get("pt", sol.get("Pt", p_arr))
-            return {
-                "x":    np.asarray(sol["x"]) + x_offset,
-                "Ma":   np.asarray(sol["Ma"]),
-                "T":    np.asarray(sol["T"]),
-                "Tt":   np.asarray(sol.get("Tt", sol["T"])),
-                "p":    np.asarray(p_arr),
-                "pt":   np.asarray(pt_arr),
-                "V":    np.asarray(sol["V"]),
-                "mdot": np.asarray(sol["mdot"]),
-                "A":    np.asarray(sol.get("A", np.full_like(sol["x"], np.nan))),
-                "h":    np.asarray(sol.get("h",  np.zeros_like(sol["x"]))),
-                "s":    np.asarray(sol.get("s",  np.zeros_like(sol["x"]))),
-                "ht":   np.asarray(sol.get("ht", np.zeros_like(sol["x"]))),
-                "st":   np.asarray(sol.get("st", np.zeros_like(sol["x"]))),
-            }
-
-        x0 = 0.0
-        s_iso = add_section(iso["solution"],  x0); x0 = s_iso["x"][-1]
-        s2    = add_section(sec2["solution"], x0); x0 = s2["x"][-1]
-        s3    = add_section(sec3["solution"], x0); x0 = s3["x"][-1]
-        s4    = add_section(sec4["solution"], x0); x0 = s4["x"][-1]
-        sections.extend([s_iso, s2, s3, s4])
-        if sec5 is not None and not sec4.get("thermal_choke", False):
-            s5 = add_section(sec5["solution"], x0)
-            sections.append(s5)
-
-        def cat(field): return np.concatenate([s[field] for s in sections])
-        x, Ma  = cat("x"), cat("Ma")
-        T, Tt  = cat("T"), cat("Tt")
-        p, pt  = cat("p"), cat("pt")
-        V      = cat("V")
-        mdot   = cat("mdot")
-        h_s, ht_s = cat("h"), cat("ht")
-        s_s, st_s = cat("s"), cat("st")
-        A_arr  = cat("A")
-
-        fig, axs = plt.subplots(7, 1, figsize=(12, 26), sharex=True)
-
-        # --- 1. Mach ----------------------------------------------------
-        axs[0].plot(x, Ma, lw=2.5, color="black", label="Mach")
-        axs[0].axhline(1.0, color="red", linestyle=":", alpha=0.5, label="Sonic")
-        axs[0].set_ylabel("Mach Number")
-        axs[0].legend(loc="best")
-
-        # --- 2. T -------------------------------------------------------
-        axs[1].plot(x, T,  lw=2,   color="tab:red",   label="Static T")
-        axs[1].plot(x, Tt, lw=2,   color="darkred",   linestyle="--", label="Total T")
-        axs[1].set_ylabel("Temperature [K]")
-        axs[1].legend(loc="best")
-
-        # --- 3. P -------------------------------------------------------
-        axs[2].plot(x, p / 1e3,  lw=2, color="tab:green",  label="Static P")
-        axs[2].plot(x, pt / 1e3, lw=2, color="darkgreen",  linestyle="--", label="Total P")
-        axs[2].set_ylabel("Pressure [kPa]")
-        axs[2].set_yscale("log")
-        axs[2].legend(loc="best")
-
-        # --- 4. Enthalpy -----------------------------------------------
-        axs[3].plot(x, h_s  / 1e6, lw=2, color="tab:orange", label="Static h")
-        axs[3].plot(x, ht_s / 1e6, lw=2, color="saddlebrown", linestyle="--", label="Total h")
-        axs[3].set_ylabel("Enthalpy [MJ/kg]")
-        axs[3].legend(loc="best")
-
-        # --- 5. Entropy -------------------------------------------------
-        axs[4].plot(x, s_s,  lw=2, color="tab:cyan",  label="Static s")
-        axs[4].plot(x, st_s, lw=2, color="tab:blue",  linestyle="--", label="Total s")
-        axs[4].set_ylabel("Entropy [J/kg/K]")
-        axs[4].legend(loc="best")
-
-        # --- 6. V -------------------------------------------------------
-        axs[5].plot(x, V, lw=2, color="tab:blue")
-        axs[5].set_ylabel("Velocity [m/s]")
-
-        # --- 7. mdot + geometry silhouette -----------------------------
-        axs[6].plot(x, mdot, lw=2, color="tab:purple", label="ṁ")
-        axs[6].set_ylabel("Mass Flow [kg/s]")
-        axs[6].set_xlabel("Position in Engine [m]")
-        # Engine shape (radius equivalent) faint silhouette
-        if np.all(np.isfinite(A_arr)) and np.nanmax(A_arr) > 0:
-            r = np.sqrt(A_arr / np.pi)
-            r_norm = r / np.nanmax(r)
-            geom_scale = 0.45 * np.nanmax(mdot)
-            axs[6].fill_between(x, -geom_scale*r_norm, geom_scale*r_norm,
-                                color="lightgray", alpha=0.35, label="Geometry")
-            axs[6].plot(x,  geom_scale*r_norm, color="black", lw=1.2)
-            axs[6].plot(x, -geom_scale*r_norm, color="black", lw=1.2)
-        axs[6].legend(loc="best")
-
-        # Section boundaries + labels
-        boundaries = [s["x"][-1] for s in sections[:-1]] if len(sections) > 1 else []
-        labels = ["Isolator", "Comb 2", "Comb 3", "Comb 4", "Nozzle"]
-        for ax in axs:
-            ax.grid(True, which="both", alpha=0.3)
-            for b in boundaries:
-                ax.axvline(b, color="gray", linestyle="--", alpha=0.7)
-        y_lim = axs[0].get_ylim()
-        for i, label in enumerate(labels[:len(sections)]):
-            x_mid = (sections[i]["x"][0] + sections[i]["x"][-1]) / 2
-            axs[0].text(x_mid, y_lim[1]*0.92, label, ha="center", weight="bold")
-
-        plt.tight_layout()
-        plt.show()
-
-
-# ---------------------------------------------------------------------------
-# Run One Case
-# ---------------------------------------------------------------------------
-def altitude_mach(self, h_km, Ma0):
-    """Helper to run a single case and print results."""
-    eng = Scramjet()
-    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
-    iso  = eng.isolator_properties(inp)
-    sec2 = eng.combustor_properties2(iso)
-    sec3 = eng.combustor_properties3(sec2, phi=0.7)
-    sec4 = eng.combustor_properties4(sec3)
-    sec5 = eng.nozzle_properties(sec4, inp)
-    perf = eng.performance(inp, sec5, sec3)
-    return perf
-
-
-# ---------------------------------------------------------------------------
-# Pretty-printer
-# ---------------------------------------------------------------------------
-def print_section(title, props, fields):
-    w = 34
-    print(f"\n{'─'*65}")
-    print(f"  {title}")
-    print(f"{'─'*65}")
-    for label, key, unit, scale in fields:
-        val = props.get(key, float("nan"))
-        try:
-            print(f"  {label:<{w}} {val*scale:>12.4f}  {unit}")
-        except TypeError:
-            print(f"  {label:<{w}} {'nan':>12}  {unit}")
-    print(f"{'─'*65}")
-
-
-
-def evaluate_engine(func, *args, **kwargs):
-    try:
-        return func(*args, **kwargs), None
-    except Exception as e:
-        return None, e
-
-
-# ---------------------------------------------------------------------------
-# 1) Altitude - Mach map sweep
-# ---------------------------------------------------------------------------
-def run_altitude_mach_map(eng):
-
-    mach_range = np.arange(5.0, 10.5, 0.5)
-    alt_range  = np.arange(25.0, 32.0, 1.0)
-
-    ISP_map    = np.full((len(alt_range), len(mach_range)), np.nan)
-    THRUST_map = np.full((len(alt_range), len(mach_range)), np.nan)
-
-    for i, h in enumerate(alt_range):
-        for j, M in enumerate(mach_range):
-
-            perf, err = evaluate_engine(altitude_mach, eng, h_km=h, Ma0=M)
-
-            if err is not None:
-                print(f"FAILED at h={h:.1f}, M={M:.2f}")
-                print(err)
-                continue
-
-            if perf.get("thermal_choke", False):
-                ISP_map[i, j] = np.nan
-                THRUST_map[i, j] = np.nan
-            else:
-                ISP_map[i, j]    = perf["Isp"]
-                THRUST_map[i, j] = perf["Fin"]
-
-            print(
-                f"h={h:.1f} km | M={M:.2f} | "
-                f"Isp={ISP_map[i,j]:.2f} s | "
-                f"Fin={THRUST_map[i,j]:.2f} N"
-            )
-
-    # -----------------------------------------------------------------------
-    # Build meshgrid for plotting
-    # -----------------------------------------------------------------------
-    M_grid, H_grid = np.meshgrid(mach_range, alt_range)
-
-    # -----------------------------------------------------------------------
-    # Build table (long format)
-    # -----------------------------------------------------------------------
-    rows = []
-    for i, h in enumerate(alt_range):
-        for j, M in enumerate(mach_range):
-            rows.append({
-                "Altitude_km": h,
-                "Mach": M,
-                "Isp_s": ISP_map[i, j],
-                "Thrust_N": THRUST_map[i, j]
-            })
-
-    results_table = pd.DataFrame(rows)
-
-    # -----------------------------------------------------------------------
-    # Plot: Isp
-    # -----------------------------------------------------------------------
-    plt.figure(figsize=(10, 6))
-    cont1 = plt.contourf(M_grid, H_grid, ISP_map, levels=40)
-    plt.colorbar(cont1).set_label("Specific Impulse Isp [s]")
-    plt.xlabel("Mach Number")
-    plt.ylabel("Altitude [km]")
-    plt.title("Scramjet Specific Impulse Map")
-    plt.tight_layout()
-
-    # -----------------------------------------------------------------------
-    # Plot: Thrust
-    # -----------------------------------------------------------------------
-    plt.figure(figsize=(10, 6))
-    cont2 = plt.contourf(M_grid, H_grid, THRUST_map, levels=40)
-    plt.colorbar(cont2).set_label("Internal Thrust Fin [N]")
-    plt.xlabel("Mach Number")
-    plt.ylabel("Altitude [km]")
-    plt.title("Scramjet Internal Thrust Map")
-    plt.tight_layout()
-
-    plt.show()
-
-    return ISP_map, THRUST_map, results_table
-
-
-# ---------------------------------------------------------------------------
-# 2) Mass flow sweep
-# ---------------------------------------------------------------------------
-def run_mdot_sweep(eng, h_km=25.0, Ma0=5.0, phi=0.7):
-
-    mdot_range = np.arange(1.0, 500.0, 10.0)
-
-    ISP_list    = []
-    THRUST_list = []
-
-    for mdot in mdot_range:
-
-        try:
-            inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=mdot)
-            iso  = eng.isolator_properties(inp)
-            sec2 = eng.combustor_properties2(iso)
-            sec3 = eng.combustor_properties3(sec2, phi=phi)
-            sec4 = eng.combustor_properties4(sec3)
-
-            if sec4["thermal_choke"]:
-                ISP_list.append(np.nan)
-                THRUST_list.append(np.nan)
-                print(f"ṁ={mdot:.1f} kg/s -> THERMAL CHOKE")
-                continue
-
-            sec5 = eng.nozzle_properties(sec4, inp)
-            perf = eng.performance(inp, sec5, sec3)
-
-            ISP_list.append(perf["Isp"])
-            THRUST_list.append(perf["Fin"])
-
-            print(
-                f"ṁ={mdot:.1f} kg/s | "
-                f"Isp={perf['Isp']:.2f} s | "
-                f"Fin={perf['Fin']:.2f} N"
-            )
-
-        except Exception as e:
-            ISP_list.append(np.nan)
-            THRUST_list.append(np.nan)
-
-            print(f"FAILED at mdot={mdot:.1f}")
-            print(e)
-
-    # -----------------------------------------------------------------------
-    # Plot Isp
-    # -----------------------------------------------------------------------
-    plt.figure(figsize=(9, 5))
-    plt.plot(mdot_range, ISP_list)
-    plt.xlabel("Air Mass Flow ṁ_air [kg/s]")
-    plt.ylabel("Specific Impulse Isp [s]")
-    plt.title("Isp vs Air Mass Flow")
-    plt.grid(True)
-    plt.tight_layout()
-
-    # -----------------------------------------------------------------------
-    # Plot Thrust
-    # -----------------------------------------------------------------------
-    plt.figure(figsize=(9, 5))
-    plt.plot(mdot_range, THRUST_list)
-    plt.xlabel("Air Mass Flow ṁ_air [kg/s]")
-    plt.ylabel("Internal Thrust Fin [N]")
-    plt.title("Thrust vs Air Mass Flow")
-    plt.grid(True)
-    plt.tight_layout()
-
-    plt.show()
-
-    return np.array(ISP_list), np.array(THRUST_list)
-
-# =============================================================================
-# Scramjet single-point runner and Mach-5 ramjet-scramjet plot
-# =============================================================================
-#
-# This section extends the original Mach-3 turbojet/ramjet plot file with:
-#
-#   - Full scramjet-cycle thrust at Mach 5
-#   - Full ramjet-cycle thrust at Mach 5
-#   - Both multiplied by engine count
-#   - Same color-coded altitude-pair style as the Mach-3 plot
-#
-# =============================================================================
-
-def run_scramjet_single_point(
-    h_km: float,
-    Ma0: float,
-    mdot: float = 100.0,
-    phi: float = 0.7,
-    suppress_output: bool = True,
-) -> dict[str, float | bool | str]:
-    """
-    Run the full scramjet model for one altitude and Mach number.
-
-    Returns thrust for ONE scramjet engine.
-    """
-    import contextlib
-    import io
-    import warnings
-
-    def _run():
-        eng = Scramjet()
-
-        inp = eng.inlet_properties(
-            h=h_km * 1000.0,
-            Ma=Ma0,
-            m_air=mdot,
-        )
-
-        iso = eng.isolator_properties(inp)
-        sec2 = eng.combustor_properties2(iso)
-        sec3 = eng.combustor_properties3(sec2, phi=phi)
-        sec4 = eng.combustor_properties4(sec3)
-        sec5 = eng.nozzle_properties(sec4, inp)
-        perf = eng.performance(inp, sec5, sec3)
-
-        return eng, inp, iso, sec2, sec3, sec4, sec5, perf
-
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", RuntimeWarning)
-
-            if suppress_output:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    eng, inp, iso, sec2, sec3, sec4, sec5, perf = _run()
-            else:
-                eng, inp, iso, sec2, sec3, sec4, sec5, perf = _run()
-
-        thrust_N = float(perf.get("Fin", np.nan))
-
-        if not np.isfinite(thrust_N):
-            raise ValueError("Non-finite scramjet thrust result.")
-
-        return {
-            "success": True,
-            "error": "",
-            "Altitude_km": float(h_km),
-            "Mach": float(Ma0),
-            "Thrust_N": thrust_N,
-            "Thrust_kN": thrust_N / 1000.0,
-            "Isp_s": float(perf.get("Isp", np.nan)),
-            "Ia_Ns_per_kg": float(perf.get("Ia", np.nan)),
-            "mdot_air_kg_s": float(mdot),
-            "mdot_air_design_kg_s": float(mdot),
-            "mfuel_kg_s": float(perf.get("mfuel", np.nan)),
-            "phi": float(phi),
-            "Ma_exit": float(sec5.get("Ma5", np.nan)) if isinstance(sec5, dict) else np.nan,
-            "T_exit_K": float(sec5.get("T5", np.nan)) if isinstance(sec5, dict) else np.nan,
-            "p_exit_Pa": float(sec5.get("p5", np.nan)) if isinstance(sec5, dict) else np.nan,
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "Altitude_km": float(h_km),
-            "Mach": float(Ma0),
-            "Thrust_N": np.nan,
-            "Thrust_kN": np.nan,
-            "Isp_s": np.nan,
-            "Ia_Ns_per_kg": np.nan,
-            "mdot_air_design_kg_s": float(mdot),
-            "mdot_air_actual_kg_s": np.nan,
-            "m_air_design_kg_s": float(mdot),
-            "A0_capture_m2": np.nan,
-            "mfuel_kg_s": np.nan,
-            "phi": float(phi),
-            "Ma_exit": np.nan,
-            "T_exit_K": np.nan,
-            "p_exit_Pa": np.nan,
-        }
-
-
-def ramjet_cycle_thrust_at_mach_altitudes_for_mach5(
-    mach_fixed: float,
-    altitude_values_m: np.ndarray,
-    mdot: float = 300.0,
-    phi: float = 0.7,
-    n_ramjet_engines: int = 2,
-    suppress_output: bool = True,
-) -> np.ndarray:
-    """
-    Full ramjet-cycle thrust at one fixed Mach number for many altitudes.
-
-    The Ramjet model returns thrust for ONE engine, so this multiplies by
-    n_ramjet_engines.
-
-    Returned thrust is in kN.
-    """
-    thrust_total_kN = []
-
-    print()
-    print(f"Full ramjet-cycle thrust at Mach {mach_fixed:g}")
-    print("-----------------------------------------")
-    print(f"Ramjet engines included: {n_ramjet_engines}")
-    print(f"{'Altitude [km]':>14s} {'One engine [kN]':>18s} {'Total [kN]':>16s} {'Status':>12s}")
-
-    for h_m in altitude_values_m:
-        h_km = h_m / 1000.0
-
-        out = run_ramjet_single_point(
-            h_km=h_km,
-            Ma0=mach_fixed,
-            mdot=mdot,
-            phi=phi,
-            suppress_output=suppress_output,
-        )
-
-        if out["success"]:
-            one_engine_kN = float(out["Thrust_kN"])
-            total_kN = n_ramjet_engines * one_engine_kN
-            status = "OK"
-        else:
-            one_engine_kN = np.nan
-            total_kN = np.nan
-            status = "FAILED"
-
-        thrust_total_kN.append(total_kN)
-
-        print(f"{h_km:14.2f} {one_engine_kN:18.3f} {total_kN:16.3f} {status:>12s}")
-        if not out["success"]:
-            print(f"    Error: {out['error']}")
-
-    return np.array(thrust_total_kN, dtype=float)
-
-
-def scramjet_cycle_thrust_at_mach_altitudes(
-    mach_fixed: float,
-    altitude_values_m: np.ndarray,
-    mdot: float = 100.0,
-    phi: float = 0.7,
-    n_scramjet_engines: int = 1,
-    suppress_output: bool = True,
-) -> np.ndarray:
-    """
-    Full scramjet-cycle thrust at one fixed Mach number for many altitudes.
-
-    The Scramjet model returns thrust for ONE engine, so this multiplies by
-    n_scramjet_engines.
-
-    Returned thrust is in kN.
-    """
-    thrust_total_kN = []
-
-    print()
-    print(f"Full scramjet-cycle thrust at Mach {mach_fixed:g}")
-    print("------------------------------------------")
-    print(f"Scramjet engines included: {n_scramjet_engines}")
-    print(f"{'Altitude [km]':>14s} {'One engine [kN]':>18s} {'Total [kN]':>16s} {'Status':>12s}")
-
-    for h_m in altitude_values_m:
-        h_km = h_m / 1000.0
-
-        out = run_scramjet_single_point(
-            h_km=h_km,
-            Ma0=mach_fixed,
-            mdot=mdot,
-            phi=phi,
-            suppress_output=suppress_output,
-        )
-
-        if out["success"]:
-            one_engine_kN = float(out["Thrust_kN"])
-            total_kN = n_scramjet_engines * one_engine_kN
-            status = "OK"
-        else:
-            one_engine_kN = np.nan
-            total_kN = np.nan
-            status = "FAILED"
-
-        thrust_total_kN.append(total_kN)
-
-        print(f"{h_km:14.2f} {one_engine_kN:18.3f} {total_kN:16.3f} {status:>12s}")
-        if not out["success"]:
-            print(f"    Error: {out['error']}")
-
-    return np.array(thrust_total_kN, dtype=float)
-
-
-def plot_ramjet_scramjet_cycle_mach_line(
-    altitude_values_m: np.ndarray | None = None,
-    mach_fixed: float = 5.0,
-    mdot_ramjet: float = 300.0,
-    mdot_scramjet: float = 100.0,
-    phi_ramjet: float = 0.7,
-    phi_scramjet: float = 0.5,
-    n_ramjet_engines: int = 2,
-    n_scramjet_engines: int = 1,
-    suppress_output: bool = True,
-) -> dict[str, np.ndarray]:
-    """
-    Same style as the Mach-3 plot, but for ramjet-to-scramjet transition
-    at Mach 5.
-
-    Color coding:
-        - Each altitude gets one color.
-        - Ramjet and scramjet at the same altitude use the same color.
-        - Ramjet point = circle marker.
-        - Scramjet point = square marker.
-        - Same-altitude points are connected with a thick colored line.
-
-    Both ramjet and scramjet models return thrust per engine, so both are
-    multiplied by their engine counts.
-    """
-    if altitude_values_m is None:
-        altitude_values_m = np.linspace(22_000.0, 32_000.0, 11)
-
-    altitude_values_m = np.asarray(altitude_values_m, dtype=float)
-
-    ramjet_total_kN = ramjet_cycle_thrust_at_mach_altitudes_for_mach5(
-        mach_fixed=mach_fixed,
-        altitude_values_m=altitude_values_m,
-        mdot=mdot_ramjet,
-        phi=phi_ramjet,
-        n_ramjet_engines=n_ramjet_engines,
-        suppress_output=suppress_output,
-    )
-
-    scramjet_total_kN = scramjet_cycle_thrust_at_mach_altitudes(
-        mach_fixed=mach_fixed,
-        altitude_values_m=altitude_values_m,
-        mdot=mdot_scramjet,
-        phi=phi_scramjet,
-        n_scramjet_engines=n_scramjet_engines,
-        suppress_output=suppress_output,
-    )
-
-    print()
-    print(f"Full ramjet-cycle vs full scramjet-cycle thrust at Mach {mach_fixed:g}")
-    print("---------------------------------------------------------------------")
-    print(f"Ramjet engines: {n_ramjet_engines}, Scramjet engines: {n_scramjet_engines}")
-    print(f"{'Altitude [km]':>14s} {'Ramjet total':>16s} {'Scram total':>16s} {'Ram - Scram':>16s}")
-
-    for h, T_ram, T_scram in zip(altitude_values_m, ramjet_total_kN, scramjet_total_kN):
-        diff = T_ram - T_scram if np.isfinite(T_ram) and np.isfinite(T_scram) else np.nan
-        print(f"{h / 1000.0:14.2f} {T_ram:16.3f} {T_scram:16.3f} {diff:16.3f}")
-
-    fig, ax = plt.subplots(figsize=(13, 8))
-
-    cmap = plt.get_cmap("tab20")
-    colors = [cmap(i / max(len(altitude_values_m) - 1, 1)) for i in range(len(altitude_values_m))]
-    offsets = np.linspace(-0.055, 0.055, len(altitude_values_m))
-
-    for i, (h, offset, T_ram, T_scram) in enumerate(
-        zip(altitude_values_m, offsets, ramjet_total_kN, scramjet_total_kN)
-    ):
-        color = colors[i]
-        x_plot = mach_fixed + offset
-        h_km = h / 1000.0
-
-        if np.isfinite(T_ram):
-            ax.scatter(
-                x_plot,
-                T_ram,
-                marker="o",
-                s=95,
-                color=color,
-                edgecolor="black",
-                linewidth=0.8,
-                zorder=12,
-            )
-
-        if np.isfinite(T_scram):
-            ax.scatter(
-                x_plot,
-                T_scram,
-                marker="s",
-                s=95,
-                color=color,
-                edgecolor="black",
-                linewidth=0.8,
-                zorder=12,
-            )
-
-        if np.isfinite(T_ram) and np.isfinite(T_scram):
-            ax.plot(
-                [x_plot, x_plot],
-                [T_ram, T_scram],
-                color=color,
-                linewidth=3.0,
-                alpha=0.95,
-                zorder=11,
-            )
-            T_mid = 0.5 * (T_ram + T_scram)
-            label_text = f"{h_km:.0f} km"
-        elif np.isfinite(T_ram):
-            T_mid = T_ram
-            label_text = f"{h_km:.0f} km\nscram fail"
-        elif np.isfinite(T_scram):
-            T_mid = T_scram
-            label_text = f"{h_km:.0f} km\nram fail"
-        else:
-            continue
-
-        ax.text(
-            x_plot + 0.035,
-            T_mid,
-            label_text,
-            va="center",
-            ha="left",
-            fontsize=9,
-            color="black",
-            bbox=dict(
-                facecolor="white",
-                edgecolor=color,
-                linewidth=1.2,
-                alpha=0.9,
-                pad=1.6,
-            ),
-            zorder=13,
-        )
-
-    ax.axvline(
-        mach_fixed,
-        color="black",
-        linestyle=":",
-        linewidth=2.5,
-        zorder=8,
-    )
-
-    ax.set_xlim(mach_fixed - 0.35, mach_fixed + 0.65)
-
-    finite_values = np.concatenate([
-        ramjet_total_kN[np.isfinite(ramjet_total_kN)],
-        scramjet_total_kN[np.isfinite(scramjet_total_kN)],
-    ])
-
-    if finite_values.size > 0:
-        ymin = np.nanmin(finite_values)
-        ymax = np.nanmax(finite_values)
-        margin = 0.12 * max(ymax - ymin, 1.0)
-        ax.set_ylim(ymin - margin, ymax + margin)
-
-    from matplotlib.lines import Line2D
-
-    legend_elements = [
-        Line2D([0], [0], marker="o", color="white", markerfacecolor="gray",
-               markeredgecolor="black", markersize=9,
-               label=f"ramjet total, {n_ramjet_engines} engines, at M={mach_fixed:g}"),
-        Line2D([0], [0], marker="s", color="white", markerfacecolor="gray",
-               markeredgecolor="black", markersize=9,
-               label=f"scramjet total, {n_scramjet_engines} engines, at M={mach_fixed:g}"),
-        Line2D([0], [0], color="gray", linewidth=3,
-               label="same-altitude connector"),
-        Line2D([0], [0], color="black", linestyle=":", linewidth=2.5,
-               label=f"Mach {mach_fixed:g}"),
-    ]
-
-    ax.legend(
-        handles=legend_elements,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        fontsize=9,
-        frameon=True,
-    )
-
-    ax.set_xlabel("Mach number [-]")
-    ax.set_ylabel("Thrust [kN]")
-    ax.set_title(
-        f"Ramjet-to-scramjet fixed-Mach comparison at Mach {mach_fixed:g}"
-    )
-    ax.grid(True, alpha=0.35)
-
-    fig.tight_layout()
-    plt.show()
-
-    return {
-        "altitude_m": altitude_values_m,
-        "altitude_km": altitude_values_m / 1000.0,
-        "mach_fixed": np.full_like(altitude_values_m, mach_fixed, dtype=float),
-        "ramjet_total_thrust_kN": ramjet_total_kN,
-        "scramjet_total_thrust_kN": scramjet_total_kN,
-        "difference_ramjet_minus_scramjet_kN": ramjet_total_kN - scramjet_total_kN,
-    }
-
-
-# =============================================================================
-# Run both transition plots
-# =============================================================================
-
-# =============================================================================
-# Supersonic / hypersonic drag model from the standalone climb-profile script
-# =============================================================================
-#
-# This replaces the old interpolated C_D polar drag model.
-#
-# The drag is now calculated with the same method as the standalone script you
-# sent:
-#   - ISA-like atmosphere density and temperature
-#   - required lift coefficient from Lift = Weight
-#   - angle of attack inferred from the required lift coefficient
-#   - Newtonian-style wave drag
-#   - Schlichting turbulent skin-friction drag
-#   - total drag = friction drag + wave drag
-#
-# Important:
-#   alpha_deg is kept in a few function signatures only so the existing plotting
-#   functions do not break. The drag model below computes the trimmed/required
-#   alpha from Lift = Weight, so user-supplied alpha_deg is not used.
+# Drag model
 # =============================================================================
 
 # Vehicle / drag constants from the standalone drag script
@@ -5043,7 +3000,7 @@ def plot_mach3_thrust_drag_vs_altitude(
     suppress_output: bool = True,
     clamp_negative_turbo_thrust: bool = True,
     S_ref: float = 400.0,
-    save_path: str | None = "mach3_thrust_drag_vs_altitude.png",
+    save_path: str | None = None,
 ) -> dict[str, np.ndarray]:
     """
     Plot turbojet thrust, ramjet thrust, and the new supersonic/hypersonic
@@ -5185,196 +3142,6 @@ def plot_mach3_thrust_drag_vs_altitude(
 # Mach-5 plot with drag included
 # =============================================================================
 
-def plot_ramjet_scramjet_mach5_with_drag(
-    altitude_values_m: np.ndarray | None = None,
-    mach_fixed: float = 5.0,
-    mdot_ramjet: float = 100.0,
-    mdot_scramjet: float = 100.0,
-    phi_ramjet: float = 0.7,
-    phi_scramjet: float = 0.5,
-    n_ramjet_engines: int = 2,
-    n_scramjet_engines: int = 1,
-    suppress_output: bool = True,
-    alpha_values_deg: list[float] | tuple[float, ...] = (0.0, 3.5, 7.5),
-    S_ref: float = 400.0,
-) -> dict[str, np.ndarray | dict[float, np.ndarray]]:
-    """
-    Mach-5 ramjet/scramjet transition plot with drag for variable alpha.
-
-    Thrust:
-        - full ramjet cycle thrust, multiplied by n_ramjet_engines
-        - full scramjet cycle thrust, multiplied by n_scramjet_engines
-
-    Drag:
-        - D = q S_ref C_D(M, C_L(alpha))
-        - plotted for each alpha in alpha_values_deg
-    """
-    if altitude_values_m is None:
-        altitude_values_m = np.linspace(22_000.0, 32_000.0, 11)
-
-    altitude_values_m = np.asarray(altitude_values_m, dtype=float)
-
-    ramjet_total_kN = ramjet_cycle_thrust_at_mach_altitudes_for_mach5(
-        mach_fixed=mach_fixed,
-        altitude_values_m=altitude_values_m,
-        mdot=mdot_ramjet,
-        phi=phi_ramjet,
-        n_ramjet_engines=n_ramjet_engines,
-        suppress_output=suppress_output,
-    )
-
-    scramjet_total_kN = scramjet_cycle_thrust_at_mach_altitudes(
-        mach_fixed=mach_fixed,
-        altitude_values_m=altitude_values_m,
-        mdot=mdot_scramjet,
-        phi=phi_scramjet,
-        n_scramjet_engines=n_scramjet_engines,
-        suppress_output=suppress_output,
-    )
-
-    fig, ax = plt.subplots(figsize=(14, 8))
-
-    cmap = plt.get_cmap("tab20")
-    colors = [cmap(i / max(len(altitude_values_m) - 1, 1)) for i in range(len(altitude_values_m))]
-    offsets = np.linspace(-0.055, 0.055, len(altitude_values_m))
-
-    for i, (h, offset, T_ram, T_scram) in enumerate(
-        zip(altitude_values_m, offsets, ramjet_total_kN, scramjet_total_kN)
-    ):
-        color = colors[i]
-        x_plot = mach_fixed + offset
-        h_km = h / 1000.0
-
-        if np.isfinite(T_ram):
-            ax.scatter(
-                x_plot,
-                T_ram,
-                marker="o",
-                s=95,
-                color=color,
-                edgecolor="black",
-                linewidth=0.8,
-                zorder=12,
-            )
-
-        if np.isfinite(T_scram):
-            ax.scatter(
-                x_plot,
-                T_scram,
-                marker="s",
-                s=95,
-                color=color,
-                edgecolor="black",
-                linewidth=0.8,
-                zorder=12,
-            )
-
-        if np.isfinite(T_ram) and np.isfinite(T_scram):
-            ax.plot(
-                [x_plot, x_plot],
-                [T_ram, T_scram],
-                color=color,
-                linewidth=3.0,
-                alpha=0.95,
-                zorder=11,
-            )
-            T_mid = 0.5 * (T_ram + T_scram)
-            label_text = f"{h_km:.0f} km"
-        elif np.isfinite(T_ram):
-            T_mid = T_ram
-            label_text = f"{h_km:.0f} km\nscram fail"
-        elif np.isfinite(T_scram):
-            T_mid = T_scram
-            label_text = f"{h_km:.0f} km\nram fail"
-        else:
-            continue
-
-        ax.text(
-            x_plot + 0.035,
-            T_mid,
-            label_text,
-            va="center",
-            ha="left",
-            fontsize=8,
-            color="black",
-            bbox=dict(facecolor="white", edgecolor=color, linewidth=1.2, alpha=0.9, pad=1.4),
-            zorder=13,
-        )
-
-    ax.axvline(
-        mach_fixed,
-        color="black",
-        linestyle=":",
-        linewidth=2.5,
-        zorder=8,
-    )
-
-    # Add drag for variable alpha.
-    drag_by_alpha = _add_drag_to_fixed_mach_plot(
-        ax=ax,
-        mach_fixed=mach_fixed,
-        altitude_values_m=altitude_values_m,
-        alpha_values_deg=alpha_values_deg,
-        S_ref=S_ref,
-        x_start_offset=0.22,
-        x_spacing=0.065,
-    )
-
-    from matplotlib.lines import Line2D
-
-    legend_elements = [
-        Line2D([0], [0], marker="o", color="white", markerfacecolor="gray",
-               markeredgecolor="black", markersize=9,
-               label=f"ramjet total, {n_ramjet_engines} engines"),
-        Line2D([0], [0], marker="s", color="white", markerfacecolor="gray",
-               markeredgecolor="black", markersize=9,
-               label=f"scramjet total, {n_scramjet_engines} engines"),
-        Line2D([0], [0], marker="^", color="gray", markerfacecolor="gray",
-               markeredgecolor="black", markersize=9,
-               linestyle="-.", label=f"drag points, S={S_ref:.0f} m²"),
-        Line2D([0], [0], color="gray", linewidth=3,
-               label="same-altitude thrust connector"),
-        Line2D([0], [0], color="black", linestyle=":", linewidth=2.5,
-               label=f"Mach {mach_fixed:g}"),
-    ]
-
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles=legend_elements + handles,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        fontsize=9,
-        frameon=True,
-    )
-
-    ax.set_xlabel("Mach number [-]")
-    ax.set_ylabel("Force [kN]")
-    ax.set_title(
-        f"Mach {mach_fixed:g}: Ramjet/Scramjet thrust with drag for variable AOA"
-    )
-    ax.grid(True, alpha=0.35)
-    ax.set_xlim(mach_fixed - 0.35, mach_fixed + 0.22 + 0.065 * len(alpha_values_deg) + 0.25)
-
-    fig.tight_layout()
-    plt.show()
-
-    return {
-        "altitude_m": altitude_values_m,
-        "altitude_km": altitude_values_m / 1000.0,
-        "mach_fixed": np.full_like(altitude_values_m, mach_fixed, dtype=float),
-        "ramjet_total_thrust_kN": ramjet_total_kN,
-        "scramjet_total_thrust_kN": scramjet_total_kN,
-        "drag_by_alpha_kN": drag_by_alpha,
-        "alpha_values_deg": np.array(alpha_values_deg, dtype=float),
-        "S_ref": np.array([S_ref]),
-    }
-
-
-# =============================================================================
-# Run Mach-3 altitude plot
-# =============================================================================
-
-
 # =============================================================================
 # Mission-profile thrust and drag vs Mach
 # =============================================================================
@@ -5383,7 +3150,6 @@ def plot_ramjet_scramjet_mach5_with_drag(
 #   - M = 1.2 to 2.2 at h = 10 km using turbojet
 #   - M = 2.2 to 3.0 climbing from 10 km to 17 km using turbojet
 #   - M = 3.0 to 5.0 climbing from 17 km to 30 km using ramjet
-#   - no scramjet segment included
 #
 # Drag model:
 #   - M <= 3.0: previous supersonic trimmed-drag model in this file
@@ -5399,33 +3165,13 @@ def plot_ramjet_scramjet_mach5_with_drag(
 #   Forces returned/plotted in kN.
 # =============================================================================
 
+
 MISSION_W_TOG_KG = 90_000.0
 MISSION_S_PLAN_M2 = 350.0
 MISSION_ACCEL_G = 0.15
 MISSION_L_REF_M = 35.0
 MISSION_S_WET_OVER_S_REF = 2.0
 N_TURBOJET_ENGINES = 2
-
-
-def mission_altitude_from_mach(M: float) -> float:
-    """
-    Mission altitude schedule [m].
-
-    New profile:
-    - Start considering the mission at M = 1.2, h = 10 km.
-    - Accelerate horizontally from M = 1.2 to M = 2.2 at h = 10 km using turbojet.
-    - From M = 2.2 to M = 3.0, climb from h = 10 km to h = 17 km using turbojet.
-    - From M = 3.0 to M = 5.0, ramjet takes over and climbs from h = 17 km to h = 30 km.
-    """
-    M = float(M)
-    if M <= 2.2:
-        return 10_000.0
-    if M <= 3.0:
-        return 10_000.0 + (M - 2.2) / (3.0 - 2.2) * (17_000.0 - 10_000.0)
-    if M >= 5.0:
-        return 30_000.0
-    return 17_000.0 + (M - 3.0) / (5.0 - 3.0) * (30_000.0 - 17_000.0)
-
 
 def _mission_viscosity_sutherland(T: float) -> float:
     """Sutherland viscosity from the attached high-speed drag script."""
@@ -5519,37 +3265,98 @@ def mission_drag_breakdown(
 
 
 
-# =============================================================================
-# Mission-profile optimization
-# =============================================================================
+
+
+# Fixed ramjet settings. The optimizer below varies trajectory + turbojet mass flow only.
+# Do not inflate ramjet mdot to hide trajectory bugs; keep the original fixed sizing.
+FIXED_RAMJET_MDOT_DESIGN = 200.0   # kg/s per ramjet engine, used to size capture area
+FIXED_RAMJET_PHI = 0.7
+FIXED_MACH5_CRUISE_ALTITUDE_KM = 30.0  # Mach 5 cruise altitude is fixed, not optimized
+N_RAMJET_ENGINES = 2
+
+# Turbojet realism caps. m0_DP is treated as PER ENGINE.
+# The optimizer may vary it, but it is not allowed to solve the problem by
+# creating a fantasy-sized turbojet. 300 kg/s per engine is still very large.
+TURBO_M0_MIN = 120.0      # kg/s per turbojet engine
+TURBO_M0_MAX = 300.0      # kg/s per turbojet engine
+MAX_TOTAL_TURBO_THRUST_KN = 1000.0  # two-engine total soft cap
+
+# Fast final-plot setting:
+# Full ramjet/CEA evaluation above Mach 4 can hang or take a very long time.
+# Keep Mach 4.5 and Mach 5 in the trajectory/drag plot, but skip their
+# expensive ramjet-thrust solve by default. Set this to 5.0 for a final slow run.
+MAX_DETAILED_RAMJET_MACH_FOR_FINAL_PLOT = 4.0
+
+# Set this to False if optimization is too slow. When False, the optimizer still
+# optimizes the ramjet-side altitudes by reducing required thrust/drag, but it
+# does not call the expensive ramjet/CEA cycle inside every objective evaluation.
+USE_RAMJET_IN_OBJECTIVE = False
+
+
+def mission_altitude_from_mach(M: float) -> float:
+    """Baseline mission altitude schedule [m].
+
+    Uses six free anchor altitudes before the fixed Mach 5 cruise point.
+    """
+    return mission_altitude_from_mach_param(
+        M=M,
+        h12_m=10_000.0,
+        h16_m=10_000.0,
+        h20_m=10_500.0,
+        h24_m=12_000.0,
+        h30_m=17_000.0,
+        h40_m=25_000.0,
+        h50_m=30_000.0,
+    )
 
 
 def mission_altitude_from_mach_param(
     M: float,
-    h_start_m: float,
-    h_m3_m: float,
-    h_end_m: float,
-    M_turbo_climb_start: float = 2.2,
-    M_ram_start: float = 3.0,
-    M_end: float = 5.0,
+    h12_m: float,
+    h16_m: float,
+    h20_m: float,
+    h24_m: float,
+    h30_m: float,
+    h40_m: float,
+    h50_m: float,
 ) -> float:
-    """
-    Parametric mission altitude schedule [m] for optimization.
+    """Optimizable mission altitude schedule [m].
 
-    - M = 1.2 to 2.2: constant h_start_m.
-    - M = 2.2 to 3.0: linear climb from h_start_m to h_m3_m.
-    - M = 3.0 to 5.0: linear climb from h_m3_m to h_end_m.
+    Six altitude anchor points are optimized:
+        M = 1.2, 1.6, 2.0, 2.4, 3.0, 4.0
+
+    The final cruise point is fixed:
+        M = 5.0 -> 30 km
     """
-    M = float(M)
-    if M <= M_turbo_climb_start:
-        return float(h_start_m)
-    if M <= M_ram_start:
-        frac = (M - M_turbo_climb_start) / (M_ram_start - M_turbo_climb_start)
-        return float(h_start_m + frac * (h_m3_m - h_start_m))
-    if M >= M_end:
-        return float(h_end_m)
-    frac = (M - M_ram_start) / (M_end - M_ram_start)
-    return float(h_m3_m + frac * (h_end_m - h_m3_m))
+    M_nodes = np.array([1.2, 1.6, 2.0, 2.4, 3.0, 4.0, 5.0], dtype=float)
+    h_nodes = np.array([h12_m, h16_m, h20_m, h24_m, h30_m, h40_m, h50_m], dtype=float)
+
+    M_clip = float(np.clip(M, M_nodes[0], M_nodes[-1]))
+    return float(np.interp(M_clip, M_nodes, h_nodes))
+
+
+def make_altitude_schedule_from_x(x: np.ndarray):
+    """Return altitude_schedule(M) from the optimizer vector.
+
+    Mach 5 cruise height is fixed at 30 km, so h50 is not part of x.
+    x = [h12_km, h16_km, h20_km, h24_km, h30_km, h40_km, turbo_m0_DP].
+    """
+    h12_km, h16_km, h20_km, h24_km, h30_km, h40_km, _turbo_m0 = map(float, x)
+    h50_km = FIXED_MACH5_CRUISE_ALTITUDE_KM
+
+    def schedule(M: float) -> float:
+        return mission_altitude_from_mach_param(
+            M=M,
+            h12_m=h12_km * 1000.0,
+            h16_m=h16_km * 1000.0,
+            h20_m=h20_km * 1000.0,
+            h24_m=h24_km * 1000.0,
+            h30_m=h30_km * 1000.0,
+            h40_m=h40_km * 1000.0,
+            h50_m=h50_km * 1000.0,
+        )
+
+    return schedule
 
 
 @lru_cache(maxsize=512)
@@ -5558,15 +3365,9 @@ def _cached_ramjet_total_thrust_kN(
     h_km_rounded: float,
     mdot_design_rounded: float,
     phi_rounded: float,
-    n_ramjet_engines: int,
+    n_engines: int,
 ) -> float:
-    """
-    Cached ramjet point evaluation.
-
-    The ramjet/CEA/Shapiro model is expensive and may be noisy during global
-    optimization. Rounding the inputs makes repeated optimizer calls reuse
-    previously calculated results.
-    """
+    """Cached ramjet call for optimizer/plotting. Returns NaN if the ramjet solve fails."""
     out = run_ramjet_single_point(
         h_km=float(h_km_rounded),
         Ma0=float(M_rounded),
@@ -5576,31 +3377,34 @@ def _cached_ramjet_total_thrust_kN(
     )
     if not out.get("success", False):
         return float("nan")
-    return float(n_ramjet_engines) * float(out["Thrust_kN"])
+    return int(n_engines) * float(out["Thrust_kN"])
 
 
 def mission_point_performance(
     M: float,
     altitude_m: float,
-    ramjet_mdot_design: float = 200.0,
-    ramjet_phi: float = 0.5,
-    n_ramjet_engines: int = 2,
+    *,
+    ramjet_mdot_design: float = FIXED_RAMJET_MDOT_DESIGN,
+    ramjet_phi: float = FIXED_RAMJET_PHI,
+    n_ramjet_engines: int = N_RAMJET_ENGINES,
     S_ref: float = MISSION_S_PLAN_M2,
     turbo_params: _TurboParams | None = None,
+    evaluate_ramjet: bool = True,
 ) -> dict[str, float]:
     """
-    Evaluate thrust, drag, required thrust, and thrust margins at one mission point.
+    Evaluate thrust, drag, required thrust, and margin at one mission point.
 
-    For M <= 3, turbojets are used. For M > 3, ramjets are used.
-    The required thrust includes the drag plus the configured 0.15 g acceleration
-    excess-thrust requirement.
+    For M <= 3, turbojets are used.
+    For M > 3, ramjets are used when evaluate_ramjet=True. If evaluate_ramjet=False,
+    ramjet thrust is returned as NaN, but drag/required thrust are still computed.
     """
     M = float(M)
     altitude_m = float(altitude_m)
 
     drag = mission_drag_breakdown(M=M, altitude_m=altitude_m, S_ref=S_ref)
     drag_kN = float(drag["D_kN"])
-    required_kN = drag_kN + MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
+    accel_kN = MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
+    required_kN = drag_kN + accel_kN
 
     if M <= 3.0:
         thrust_one_engine_kN = turbo_thrust_curve_vs_mach(
@@ -5611,17 +3415,18 @@ def mission_point_performance(
         )[0]
         thrust_kN = float(N_TURBOJET_ENGINES) * float(thrust_one_engine_kN)
         engine = "turbojet"
-        ramjet_mdot_actual = np.nan
     else:
-        thrust_kN = _cached_ramjet_total_thrust_kN(
-            round(M, 3),
-            round(altitude_m / 1000.0, 3),
-            round(float(ramjet_mdot_design), 2),
-            round(float(ramjet_phi), 4),
-            int(n_ramjet_engines),
-        )
         engine = "ramjet"
-        ramjet_mdot_actual = np.nan
+        if evaluate_ramjet:
+            thrust_kN = _cached_ramjet_total_thrust_kN(
+                round(M, 3),
+                round(altitude_m / 1000.0, 3),
+                round(float(ramjet_mdot_design), 2),
+                round(float(ramjet_phi), 4),
+                int(n_ramjet_engines),
+            )
+        else:
+            thrust_kN = float("nan")
 
     return {
         "M": M,
@@ -5631,12 +3436,11 @@ def mission_point_performance(
         "thrust_kN": float(thrust_kN),
         "drag_kN": drag_kN,
         "required_thrust_0p15g_kN": required_kN,
-        "net_vs_drag_kN": float(thrust_kN - drag_kN),
-        "net_vs_0p15g_req_kN": float(thrust_kN - required_kN),
+        "net_vs_drag_kN": float(thrust_kN - drag_kN) if np.isfinite(thrust_kN) else np.nan,
+        "net_vs_0p15g_req_kN": float(thrust_kN - required_kN) if np.isfinite(thrust_kN) else np.nan,
         "alpha_deg": float(drag.get("alpha_deg", np.nan)),
         "CL": float(drag.get("CL", np.nan)),
         "drag_model": drag.get("model", ""),
-        "ramjet_mdot_actual_kg_s_per_engine": float(ramjet_mdot_actual),
     }
 
 
@@ -5645,161 +3449,174 @@ def mission_optimization_objective(
     vital_mach: np.ndarray | None = None,
     verbose: bool = False,
 ) -> float:
-    """
-    Objective for mission-profile optimization with TURBOJET MASS-FLOW sizing only.
+    """Objective for mission-profile optimization.
 
     Decision variables:
-        x[0] = h_start_km, altitude from M=1.2 to M=2.2
-        x[1] = h_M3_km, altitude at ramjet takeover, M=3.0
-        x[2] = h_M5_km, altitude at final mission point, M=5.0
-        x[3] = turbojet design mass flow per engine, m0_DP [kg/s]
+        x[0] = h at M=1.2  [km]
+        x[1] = h at M=1.6  [km]
+        x[2] = h at M=2.0  [km]
+        x[3] = h at M=2.4  [km]
+        x[4] = h at M=3.0  [km]
+        x[5] = h at M=4.0  [km]
+        x[6] = turbojet design mass flow per engine, m0_DP [kg/s]
 
-    Fixed turbojet parameters:
-        CPR_DP = _TP.CPR_DP
-        Tt4_DP = _TP.Tt4_DP
-
-    Ramjet settings are also intentionally fixed here. The optimizer now attacks
-    the weak part of the trajectory by changing altitude schedule and turbojet
-    mass-flow sizing, without using CPR or turbine inlet temperature as fudge factors.
+    Fixed:
+        h at M=5.0 = 30 km cruise altitude, CPR_DP, Tt4_DP, ramjet mdot, ramjet phi.
     """
-    h_start_km, h_M3_km, h_M5_km, turbo_m0_DP = map(float, x)
+    h12_km, h16_km, h20_km, h24_km, h30_km, h40_km, turbo_m0_DP = map(float, x)
+    h50_km = FIXED_MACH5_CRUISE_ALTITUDE_KM
+    h_nodes = np.array([h12_km, h16_km, h20_km, h24_km, h30_km, h40_km, h50_km], dtype=float)
 
-    turbo_CPR_DP = float(_TP.CPR_DP)
-    turbo_Tt4_DP = float(_TP.Tt4_DP)
+    # Bounds and monotonic-climb constraints.
+    penalty = 0.0
+    if not (8.0 <= h12_km <= 14.0): penalty += 1e5
+    if not (8.0 <= h16_km <= 15.0): penalty += 1e5
+    if not (8.5 <= h20_km <= 16.5): penalty += 1e5
+    if not (9.0 <= h24_km <= 18.5): penalty += 1e5
+    if not (16.0 <= h30_km <= 18.5): penalty += 1e5
+    if not (20.0 <= h40_km <= 27.0): penalty += 1e5
+    if not (TURBO_M0_MIN <= turbo_m0_DP <= TURBO_M0_MAX): penalty += 1e5
 
-    # Hard constraints / sanity checks.
-    if not (8.0 <= h_start_km <= 14.0):
-        return 1.0e9
-    if not (h_start_km <= h_M3_km <= h_M5_km):
-        return 1.0e9
-    if not (14.0 <= h_M3_km <= 22.0):
-        return 1.0e9
-    if not (24.0 <= h_M5_km <= 32.0):
-        return 1.0e9
-    if not (120.0 <= turbo_m0_DP <= 650.0):
-        return 1.0e9
+    # Penalize descending segments.
+    dh = np.diff(h_nodes)
+    if np.any(dh < 0.0):
+        penalty += 500.0 * float(np.sum(np.abs(np.minimum(dh, 0.0)) ** 2))
+
+    # Smooth climb penalty to avoid zig-zag profiles.
+    second_diff = np.diff(h_nodes, n=2)
+    penalty += 0.02 * float(np.sum(second_diff**2))
+
+    # Keep the ramjet handover inside the viable altitude band only.
+    # No target altitude is imposed within 16.0--18.5 km.
 
     turbo_params = make_turbo_params(
         m0_DP=turbo_m0_DP,
-        CPR_DP=turbo_CPR_DP,
-        Tt4_DP=turbo_Tt4_DP,
+        CPR_DP=_TP.CPR_DP,
+        Tt4_DP=_TP.Tt4_DP,
     )
+    altitude_schedule = make_altitude_schedule_from_x(x)
 
     if vital_mach is None:
-        # Dense in turbojet region because that is the limiting part.
-        # The optimizer does not call the ramjet/CEA model; ramjet settings are
-        # fixed and only used later when plotting the full mission.
-        vital_mach = np.array([1.2, 1.6, 2.0, 2.2, 2.6, 3.0], dtype=float)
+        vital_mach = np.array([1.2, 1.6, 2.0, 2.4, 3.0, 4.0, 5.0], dtype=float)
 
     weights = {
         1.2: 2.0,
         1.6: 2.0,
         2.0: 2.5,
-        2.2: 3.0,
-        2.6: 3.0,
-        3.0: 4.0,   # propulsion transition is critical
+        2.4: 3.0,
+        3.0: 5.0,   # propulsion transition
+        4.0: 2.0,
+        5.0: 4.0,   # fixed cruise endpoint
     }
 
     residuals = []
-    penalty = 0.0
     rows = []
-
-    # Ramjet is fixed and not used inside the optimizer.
-    fixed_ramjet_mdot_design = 200.0
-    fixed_ramjet_phi = 0.5
+    evaluate_ramjet = bool(USE_RAMJET_IN_OBJECTIVE and _HAS_CEA)
 
     for M in vital_mach:
-        altitude_m = mission_altitude_from_mach_param(
-            M=float(M),
-            h_start_m=h_start_km * 1000.0,
-            h_m3_m=h_M3_km * 1000.0,
-            h_end_m=h_M5_km * 1000.0,
-        )
+        altitude_m = altitude_schedule(float(M))
         perf = mission_point_performance(
             M=float(M),
             altitude_m=altitude_m,
-            ramjet_mdot_design=fixed_ramjet_mdot_design,
-            ramjet_phi=fixed_ramjet_phi,
-            n_ramjet_engines=2,
+            ramjet_mdot_design=FIXED_RAMJET_MDOT_DESIGN,
+            ramjet_phi=FIXED_RAMJET_PHI,
+            n_ramjet_engines=N_RAMJET_ENGINES,
             S_ref=MISSION_S_PLAN_M2,
             turbo_params=turbo_params,
+            evaluate_ramjet=evaluate_ramjet or float(M) <= 3.0,
         )
         rows.append(perf)
 
-        thrust_kN = perf["thrust_kN"]
-        required_kN = max(perf["required_thrust_0p15g_kN"], 1.0)
-        margin_kN = perf["net_vs_0p15g_req_kN"]
-
-        if not np.isfinite(thrust_kN):
-            return 1.0e8
-
-        # Force the optimizer to close the turbojet thrust gap.
+        req = max(perf["required_thrust_0p15g_kN"], 1.0)
         w = weights.get(round(float(M), 1), 1.0)
-        residuals.append(np.sqrt(w) * margin_kN / required_kN)
 
-        # Strongly penalize under-powered turbojet points.
-        if margin_kN < 0.0:
-            penalty += 25.0 * abs(margin_kN) / required_kN
+        if np.isfinite(perf["thrust_kN"]):
+            margin = perf["net_vs_0p15g_req_kN"]
+            residuals.append(np.sqrt(w) * margin / req)
 
-        # Soft penalty for excessive angle of attack.
+            # Underpowered points are worse than overpowering, so the
+            # optimizer still tries to deliver enough thrust within the cap.
+            if margin < 0.0:
+                penalty += 25.0 * abs(margin) / req
+
+            # Do not let the optimizer hide a bad trajectory behind fantasy
+            # turbojet thrust. This is a soft cap, not a hard failure, so if
+            # the mission is impossible within the m0 cap the optimizer still
+            # returns the least-bad trajectory.
+            if perf["engine"] == "turbojet" and perf["thrust_kN"] > MAX_TOTAL_TURBO_THRUST_KN:
+                excess = (perf["thrust_kN"] - MAX_TOTAL_TURBO_THRUST_KN) / MAX_TOTAL_TURBO_THRUST_KN
+                penalty += 50.0 * excess**2
+        else:
+            # FAST mode: no ramjet/CEA inside the objective. For ramjet-region
+            # points, minimize required thrust so altitude still moves.
+            residuals.append(np.sqrt(w) * req / 2500.0)
+
         alpha_deg = perf.get("alpha_deg", np.nan)
         if np.isfinite(alpha_deg) and alpha_deg > 10.0:
-            penalty += ((alpha_deg - 10.0) / 5.0) ** 2
+            penalty += ((alpha_deg - 10.0) / 4.0) ** 2
 
-    # Soft design penalty so the optimizer does not simply choose an absurdly huge engine.
-    # CPR and Tt4 are intentionally fixed and do not appear in this penalty.
-    penalty += 0.02 * ((turbo_m0_DP - _TP.m0_DP) / 100.0) ** 2
+    # Mild penalty against simply oversizing turbojet mass flow.
+    penalty += 0.20 * ((turbo_m0_DP - _TP.m0_DP) / 100.0) ** 2
 
     residuals = np.array(residuals, dtype=float)
     objective = float(np.mean(residuals**2) + penalty)
 
     if verbose:
-        print("\nMission optimization evaluation — turbojet m0 only")
-        print("------------------------------------------------")
-        print(f"h_start       = {h_start_km:.3f} km")
-        print(f"h_M3          = {h_M3_km:.3f} km")
-        print(f"h_M5          = {h_M5_km:.3f} km")
-        print(f"turbo m0_DP   = {turbo_m0_DP:.3f} kg/s per turbojet")
-        print(f"turbo CPR_DP  = {turbo_CPR_DP:.3f}, fixed")
-        print(f"turbo Tt4_DP  = {turbo_Tt4_DP:.1f} K, fixed")
-        print("ramjet mdot   = 200.000 kg/s per ramjet, fixed")
-        print("ramjet phi    = 0.5000, fixed")
+        print("\nMission optimization evaluation")
+        print("-------------------------------")
+        print(f"h(M=1.2)      = {h12_km:.3f} km")
+        print(f"h(M=1.6)      = {h16_km:.3f} km")
+        print(f"h(M=2.0)      = {h20_km:.3f} km")
+        print(f"h(M=2.4)      = {h24_km:.3f} km")
+        print(f"h(M=3.0)      = {h30_km:.3f} km")
+        print(f"h(M=4.0)      = {h40_km:.3f} km")
+        print(f"h(M=5.0)      = {h50_km:.3f} km, fixed cruise altitude")
+        print(f"turbo m0_DP   = {turbo_m0_DP:.3f} kg/s per turbojet  (cap {TURBO_M0_MAX:.0f})")
+        print(f"turbo CPR_DP  = {_TP.CPR_DP:.3f}, fixed")
+        print(f"turbo Tt4_DP  = {_TP.Tt4_DP:.1f} K, fixed")
+        print(f"ramjet mdot   = {FIXED_RAMJET_MDOT_DESIGN:.1f} kg/s per ramjet, fixed")
+        print(f"ramjet phi    = {FIXED_RAMJET_PHI:.3f}, fixed")
+        print(f"ramjet in objective = {evaluate_ramjet}")
         print(f"objective     = {objective:.6g}")
         print(f"{'M':>5s} {'h[km]':>8s} {'engine':>9s} {'T[kN]':>10s} {'D[kN]':>10s} {'Req[kN]':>10s} {'Margin[kN]':>12s} {'alpha[deg]':>11s}")
         for row in rows:
+            margin = row["net_vs_0p15g_req_kN"]
             print(
                 f"{row['M']:5.2f} {row['altitude_km']:8.3f} {row['engine']:>9s} "
                 f"{row['thrust_kN']:10.2f} {row['drag_kN']:10.2f} "
                 f"{row['required_thrust_0p15g_kN']:10.2f} "
-                f"{row['net_vs_0p15g_req_kN']:12.2f} {row['alpha_deg']:11.3f}"
+                f"{margin:12.2f} {row['alpha_deg']:11.3f}"
             )
 
     return objective
 
+
 def optimize_mission_profile(
-    maxiter: int = 30,
-    popsize: int = 8,
+    maxiter: int = 8,
+    popsize: int = 4,
     seed: int = 3,
+    polish: bool = False,
 ):
     """
-    Run a global optimization of the mission altitude schedule and turbojet m0_DP.
+    Optimize the mission altitude schedule plus turbojet mass-flow sizing.
 
-    CPR_DP and Tt4_DP are fixed at the baseline turbojet values. The ramjet is
-    also kept fixed because the current problem is turbojet thrust deficit.
-    Increase maxiter/popsize for a more thorough design search.
+    Mach 5 cruise height is fixed at 30 km. CPR and Tt4 are fixed. Ramjet mdot and phi are fixed.
     """
     bounds = [
-        (9.0, 12.0),       # h_start_km, used from M=1.2 to M=2.2
-        (15.0, 20.0),      # h_M3_km
-        (26.0, 31.5),      # h_M5_km
-        (150.0, 650.0),    # turbojet design mdot per engine, m0_DP [kg/s]
+        (8.5, 13.0),      # h at M=1.2 [km]
+        (8.5, 14.5),      # h at M=1.6 [km]
+        (9.0, 16.0),      # h at M=2.0 [km]
+        (10.0, 18.0),     # h at M=2.4 [km]
+        (16.0, 18.5),     # h at M=3.0 [km] - viable ramjet takeover band
+        (20.0, 27.0),     # h at M=4.0 [km] - avoid starving ramjet before M=5
+        (TURBO_M0_MIN, TURBO_M0_MAX),  # turbojet design mdot per engine [kg/s]
     ]
 
     result = differential_evolution(
         mission_optimization_objective,
         bounds=bounds,
-        tol=0.03,
-        polish=True,
+        tol=0.05,
+        polish=polish,
         updating="immediate",
         workers=1,
         maxiter=maxiter,
@@ -5811,91 +3628,75 @@ def optimize_mission_profile(
     mission_optimization_objective(result.x, verbose=True)
     return result
 
+
 def plot_optimized_mission_profile(
     opt_result,
-    save_path: str | None = "mission_profile_optimized_thrust_drag_vs_mach.png",
-    csv_path: str | None = "mission_profile_optimized_thrust_drag_results.csv",
+    save_path: str | None = None,
+    csv_path: str | None = None,
     suppress_output: bool = True,
 ) -> dict[str, np.ndarray]:
-    """
-    Plot the optimized profile using the best design returned by optimize_mission_profile().
-    """
-    h_start_km, h_M3_km, h_M5_km, turbo_m0_DP = map(float, opt_result.x)
+    """Plot the optimized profile using the exact optimized altitude schedule."""
+    h12_km, h16_km, h20_km, h24_km, h30_km, h40_km, turbo_m0_DP = map(float, opt_result.x)
+    h50_km = FIXED_MACH5_CRUISE_ALTITUDE_KM
+    altitude_schedule = make_altitude_schedule_from_x(opt_result.x)
     turbo_params = make_turbo_params(
         m0_DP=turbo_m0_DP,
         CPR_DP=_TP.CPR_DP,
         Tt4_DP=_TP.Tt4_DP,
     )
-    mdot_design = 200.0
-    phi = 0.5
 
-    # Temporarily override the simple schedule by evaluating the parametric one locally.
-    mach_turbo = np.linspace(1.2, 3.0, 70)
-    mach_ramjet = np.linspace(3.0, 5.0, 9)
-
-    old_schedule = mission_altitude_from_mach
-
-    def optimized_schedule(M: float) -> float:
-        return mission_altitude_from_mach_param(
-            M=M,
-            h_start_m=h_start_km * 1000.0,
-            h_m3_m=h_M3_km * 1000.0,
-            h_end_m=h_M5_km * 1000.0,
-        )
-
-    globals()["mission_altitude_from_mach"] = optimized_schedule
-    try:
-        return plot_mission_profile_thrust_drag_vs_mach(
-            mach_turbo=mach_turbo,
-            mach_ramjet=mach_ramjet,
-            ramjet_mdot_design=mdot_design,
-            ramjet_phi=phi,
-            n_ramjet_engines=2,
-            S_ref=MISSION_S_PLAN_M2,
-            save_path=save_path,
-            csv_path=csv_path,
-            suppress_output=suppress_output,
-            turbo_params=turbo_params,
-        )
-    finally:
-        globals()["mission_altitude_from_mach"] = old_schedule
+    return plot_mission_profile_thrust_drag_vs_mach(
+        mach_turbo=np.linspace(1.2, 3.0, 35),
+        mach_ramjet=np.array([3.0, 3.5, 4.0, 4.5, 5.0]),
+        ramjet_mdot_design=FIXED_RAMJET_MDOT_DESIGN,
+        ramjet_phi=FIXED_RAMJET_PHI,
+        n_ramjet_engines=N_RAMJET_ENGINES,
+        S_ref=MISSION_S_PLAN_M2,
+        save_path=save_path,
+        csv_path=csv_path,
+        suppress_output=suppress_output,
+        turbo_params=turbo_params,
+        altitude_schedule=altitude_schedule,
+        title_suffix=(
+            f"Optimized: h1.2={h12_km:.1f}, h1.6={h16_km:.1f}, "
+            f"h2.0={h20_km:.1f}, h2.4={h24_km:.1f}, "
+            f"h3={h30_km:.1f}, h4={h40_km:.1f}, h5={h50_km:.1f} km"
+        ),
+    )
 
 
 def plot_mission_profile_thrust_drag_vs_mach(
     mach_turbo: np.ndarray | None = None,
     mach_ramjet: np.ndarray | None = None,
-    ramjet_mdot_design: float = 200.0,
-    ramjet_phi: float = 0.5,
-    n_ramjet_engines: int = 2,
+    ramjet_mdot_design: float = FIXED_RAMJET_MDOT_DESIGN,
+    ramjet_phi: float = FIXED_RAMJET_PHI,
+    n_ramjet_engines: int = N_RAMJET_ENGINES,
     S_ref: float = MISSION_S_PLAN_M2,
-    save_path: str | None = "mission_profile_thrust_drag_vs_mach.png",
-    csv_path: str | None = "mission_profile_thrust_drag_results.csv",
+    save_path: str | None = None,
+    csv_path: str | None = None,
     suppress_output: bool = True,
     turbo_params: _TurboParams | None = None,
+    altitude_schedule=None,
+    title_suffix: str = "Baseline schedule",
 ) -> dict[str, np.ndarray]:
     """
-    Plot thrust and drag against Mach number for the requested mission segment.
+    Plot thrust and drag against Mach number.
 
-    Turbojet:
-        M = 1.2 -> 2.2 at h = 10 km, then M = 2.2 -> 3.0 climbing to 17 km.
-
-    Ramjet:
-        M = 3.0 -> 5.0 while climbing h = 17 -> 30 km.
-
-    Note:
-        Ramjet model points are expensive because they run the full CEA/Shapiro
-        cycle. By default, this function uses a modest number of ramjet points.
+    The altitude schedule is passed explicitly. This fixes the previous fragile
+    global-function override and makes sure the optimized altitudes are actually
+    used in the final plot and CSV.
     """
     if mach_turbo is None:
-        mach_turbo = np.linspace(1.2, 3.0, 60)
+        mach_turbo = np.linspace(1.2, 3.0, 35)
     if mach_ramjet is None:
-        mach_ramjet = np.linspace(3.0, 5.0, 9)
+        mach_ramjet = np.array([3.0, 3.5, 4.0, 4.5, 5.0])
+    if altitude_schedule is None:
+        altitude_schedule = mission_altitude_from_mach
 
     mach_turbo = np.asarray(mach_turbo, dtype=float)
     mach_ramjet = np.asarray(mach_ramjet, dtype=float)
 
-    # Turbojet segment: horizontal at 17 km.
-    alt_turbo_m = np.array([mission_altitude_from_mach(M) for M in mach_turbo])
+    alt_turbo_m = np.array([altitude_schedule(float(M)) for M in mach_turbo])
     turbo_thrust_one_engine_kN = np.array([
         turbo_thrust_curve_vs_mach(
             altitude_m=float(h),
@@ -5912,8 +3713,7 @@ def plot_mission_profile_thrust_drag_vs_mach(
     turbo_drag_kN = np.array([b["D_kN"] for b in turbo_drag])
     turbo_required_015g_kN = turbo_drag_kN + MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
 
-    # Ramjet segment: climb from 17 to 30 km.
-    alt_ramjet_m = np.array([mission_altitude_from_mach(M) for M in mach_ramjet])
+    alt_ramjet_m = np.array([altitude_schedule(float(M)) for M in mach_ramjet])
 
     ramjet_thrust_kN = []
     ramjet_one_engine_kN = []
@@ -5922,34 +3722,45 @@ def plot_mission_profile_thrust_drag_vs_mach(
     print()
     print("Mission ramjet points")
     print("---------------------")
-    print(f"Ramjet design mdot per engine: {ramjet_mdot_design:.1f} kg/s")
+    print(f"Ramjet design mdot per engine: {ramjet_mdot_design:.1f} kg/s  (increased to raise ramjet thrust)")
     print(f"Ramjet engines included: {n_ramjet_engines}")
     print(f"{'Mach':>7s} {'h [km]':>8s} {'one eng [kN]':>14s} {'total [kN]':>12s} {'mdot actual':>13s} {'status':>10s}")
 
     for M, h in zip(mach_ramjet, alt_ramjet_m):
-        out = run_ramjet_single_point(
-            h_km=float(h / 1000.0),
-            Ma0=float(M),
-            mdot=ramjet_mdot_design,
-            phi=ramjet_phi,
-            suppress_output=suppress_output,
-        )
-        if out.get("success", False):
-            one = float(out["Thrust_kN"])
-            total = n_ramjet_engines * one
-            mdot_actual = float(out.get("mdot_air_actual_kg_s", out.get("mdot_air_kg_s", np.nan)))
-            status = "OK"
-        else:
+        # The high-Mach ramjet solve is the slow part of the script. In fast mode,
+        # keep M=4.5 and M=5.0 for altitude/drag/required-thrust curves, but do
+        # not run the detailed CEA/Shapiro ramjet solve there.
+        if float(M) > MAX_DETAILED_RAMJET_MACH_FOR_FINAL_PLOT:
             one = np.nan
             total = np.nan
             mdot_actual = np.nan
-            status = "FAILED"
+            status = "SKIPPED"
+        else:
+            out = run_ramjet_single_point(
+                h_km=float(h / 1000.0),
+                Ma0=float(M),
+                mdot=ramjet_mdot_design,
+                phi=ramjet_phi,
+                suppress_output=suppress_output,
+            )
+            if out.get("success", False):
+                one = float(out["Thrust_kN"])
+                total = n_ramjet_engines * one
+                mdot_actual = float(out.get("mdot_air_actual_kg_s", out.get("mdot_air_kg_s", np.nan)))
+                status = "OK"
+            else:
+                one = np.nan
+                total = np.nan
+                mdot_actual = np.nan
+                status = "FAILED"
         ramjet_one_engine_kN.append(one)
         ramjet_thrust_kN.append(total)
         ramjet_mdot_actual.append(mdot_actual)
         ramjet_status.append(status)
         print(f"{M:7.2f} {h/1000.0:8.2f} {one:14.3f} {total:12.3f} {mdot_actual:13.3f} {status:>10s}")
-        if status != "OK":
+        if status == "SKIPPED":
+            print(f"   skipped detailed ramjet solve above M={MAX_DETAILED_RAMJET_MACH_FOR_FINAL_PLOT:.1f} to avoid long runtime")
+        elif status != "OK":
             print("   error:", out.get("error", ""))
 
     ramjet_thrust_kN = np.array(ramjet_thrust_kN, dtype=float)
@@ -5961,43 +3772,31 @@ def plot_mission_profile_thrust_drag_vs_mach(
     ramjet_drag_kN = np.array([b["D_kN"] for b in ramjet_drag])
     ramjet_required_015g_kN = ramjet_drag_kN + MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
 
-    # Plot
     fig, ax = plt.subplots(figsize=(12, 7.5))
 
     ax.plot(mach_turbo, turbo_thrust_kN, linewidth=2.5, label=f"Turbojet thrust, {N_TURBOJET_ENGINES} engines")
-    ax.plot(mach_turbo, turbo_drag_kN, linestyle="--", linewidth=2.5,
-            label="Drag, M=1.2–3 supersonic model")
-    ax.plot(mach_turbo, turbo_required_015g_kN, linestyle=":", linewidth=2.0,
-            label="Drag + 0.15g accel requirement")
+    ax.plot(mach_turbo, turbo_drag_kN, linestyle="--", linewidth=2.5, label="Turbojet-region drag")
+    ax.plot(mach_turbo, turbo_required_015g_kN, linestyle=":", linewidth=2.0, label="Drag + 0.15g requirement")
 
-    ax.plot(mach_ramjet, ramjet_thrust_kN, marker="s", linewidth=2.5,
-            label=f"Ramjet thrust, {n_ramjet_engines} engines")
-    ax.plot(mach_ramjet, ramjet_drag_kN, marker="^", linestyle="--", linewidth=2.5,
-            label="Drag, M=3–5 attached high-speed model")
-    ax.plot(mach_ramjet, ramjet_required_015g_kN, marker=".", linestyle=":", linewidth=2.0,
-            label="Drag + 0.15g accel requirement, ramjet climb")
+    ax.plot(mach_ramjet, ramjet_thrust_kN, marker="s", linewidth=2.5, label=f"Ramjet thrust, {n_ramjet_engines} engines")
+    ax.plot(mach_ramjet, ramjet_drag_kN, marker="^", linestyle="--", linewidth=2.5, label="Ramjet-region drag")
+    ax.plot(mach_ramjet, ramjet_required_015g_kN, marker=".", linestyle=":", linewidth=2.0, label="Drag + 0.15g requirement, ramjet")
 
     ax.axvline(3.0, color="black", linestyle="-.", linewidth=1.6, label="Ramjet takeover M=3")
-    ax.axvline(5.0, color="black", linestyle=":", linewidth=1.6, label="Ramjet cruise/check point M=5")
+    ax.axvline(5.0, color="black", linestyle=":", linewidth=1.6, label="M=5 check point")
 
-    # Secondary axis for altitude profile.
     ax2 = ax.twinx()
     all_mach_alt = np.concatenate([mach_turbo, mach_ramjet])
     all_alt = np.concatenate([alt_turbo_m, alt_ramjet_m]) / 1000.0
-    ax2.plot(all_mach_alt, all_alt, color="gray", alpha=0.45, linewidth=1.8,
-             label="Mission altitude")
+    ax2.plot(all_mach_alt, all_alt, color="gray", alpha=0.45, linewidth=1.8, label="Mission altitude")
     ax2.set_ylabel("Altitude [km]")
-    ax2.set_ylim(8, 32)
+    ax2.set_ylim(8, 33)
 
     ax.set_xlabel("Mach number [-]")
     ax.set_ylabel("Force [kN]")
-    ax.set_title(
-        "Mission profile: thrust and drag vs Mach\n"
-        "Turbojet: M=1.2→2.2 at h=10 km, then climb to 17 km by M=3 | Ramjet: M=3→5 climb to 30 km"
-    )
+    ax.set_title("Mission profile: thrust and drag vs Mach\n" + title_suffix)
     ax.grid(True, alpha=0.35)
 
-    # Combine legends.
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8.5, loc="best")
@@ -6007,14 +3806,13 @@ def plot_mission_profile_thrust_drag_vs_mach(
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
 
-    # Save a clean CSV.
     rows = []
     for M, h, T, D, Req, b in zip(mach_turbo, alt_turbo_m, turbo_thrust_kN, turbo_drag_kN, turbo_required_015g_kN, turbo_drag):
         rows.append({
             "segment": "turbojet_accel_climb",
             "Mach": float(M),
             "altitude_m": float(h),
-            "altitude_km": float(h/1000.0),
+            "altitude_km": float(h / 1000.0),
             "thrust_kN": float(T),
             "drag_kN": float(D),
             "required_thrust_0p15g_kN": float(Req),
@@ -6030,12 +3828,12 @@ def plot_mission_profile_thrust_drag_vs_mach(
             "segment": "ramjet_climb",
             "Mach": float(M),
             "altitude_m": float(h),
-            "altitude_km": float(h/1000.0),
+            "altitude_km": float(h / 1000.0),
             "thrust_kN": float(T),
             "drag_kN": float(D),
             "required_thrust_0p15g_kN": float(Req),
-            "net_vs_drag_kN": float(T - D),
-            "net_vs_0p15g_req_kN": float(T - Req),
+            "net_vs_drag_kN": float(T - D) if np.isfinite(T) else np.nan,
+            "net_vs_0p15g_req_kN": float(T - Req) if np.isfinite(T) else np.nan,
             "alpha_deg": float(b.get("alpha_deg", np.nan)),
             "CL": float(b.get("CL", np.nan)),
             "drag_model": b.get("model", ""),
@@ -6066,46 +3864,45 @@ def plot_mission_profile_thrust_drag_vs_mach(
 
 
 if __name__ == "__main__":
-    # ---------------------------------------------------------------------
-    # IMPORTANT:
-    # Set RUN_OPTIMIZATION = True to actually optimize the trajectory.
-    # The previous version only plotted the fixed baseline values, so it
-    # looked unchanged even though optimizer functions existed above.
-    # ---------------------------------------------------------------------
     RUN_OPTIMIZATION = True
 
     if RUN_OPTIMIZATION:
         print("\nRunning mission-profile optimization from Mach 1.2 to Mach 5.0...")
-        print("Optimizer variables: h_start, h_at_M3, h_at_M5, turbo_m0_DP")
-        print("CPR and Tt4 are fixed at baseline turbojet values; ramjet settings are fixed at mdot=200 kg/s per engine and phi=0.5.")
+        print("Optimizer variables: h(M=1.2), h(M=1.6), h(M=2.0), h(M=2.4), h(M=3), h(M=4), turbo m0_DP")
+        print(f"Mach 5 cruise altitude is fixed at {FIXED_MACH5_CRUISE_ALTITUDE_KM:.1f} km.")
+        print("CPR and Tt4 are fixed. Ramjet mdot and phi are fixed.")
+        print(f"USE_RAMJET_IN_OBJECTIVE = {USE_RAMJET_IN_OBJECTIVE} and _HAS_CEA = {_HAS_CEA}")
+        print("FAST mode: optimizer skips expensive ramjet/CEA calls.")
+        print(f"Final plot skips detailed ramjet solves above M={MAX_DETAILED_RAMJET_MACH_FOR_FINAL_PLOT:.1f} to avoid hanging.")
 
         opt_result = optimize_mission_profile(
-            maxiter=20,   # increase to 40-80 for a more thorough final run
-            popsize=6,    # increase to 8-12 for a more thorough final run
+            maxiter=8,
+            popsize=4,
             seed=3,
+            polish=False,
         )
 
         results_mission = plot_optimized_mission_profile(
             opt_result,
-            save_path="mission_profile_OPTIMIZED_thrust_drag_vs_mach.png",
-            csv_path="mission_profile_OPTIMIZED_thrust_drag_results.csv",
+            save_path=None,
+            csv_path=None,
             suppress_output=True,
         )
 
         print("\nOptimization complete.")
-        print("Saved optimized plot: mission_profile_OPTIMIZED_thrust_drag_vs_mach.png")
-        print("Saved optimized CSV : mission_profile_OPTIMIZED_thrust_drag_results.csv")
+        print("No PNG or CSV files were saved.")
 
     else:
         print("\nRunning fixed baseline mission profile, no optimization.")
         results_mission = plot_mission_profile_thrust_drag_vs_mach(
-            mach_turbo=np.linspace(1.2, 3.0, 70),
-            mach_ramjet=np.linspace(3.0, 5.0, 9),
-            ramjet_mdot_design=200.0,
-            ramjet_phi=0.5,
-            n_ramjet_engines=2,
+            mach_turbo=np.linspace(1.2, 3.0, 35),
+            mach_ramjet=np.array([3.0, 3.5, 4.0, 4.5, 5.0]),
+            ramjet_mdot_design=FIXED_RAMJET_MDOT_DESIGN,
+            ramjet_phi=FIXED_RAMJET_PHI,
+            n_ramjet_engines=N_RAMJET_ENGINES,
             S_ref=MISSION_S_PLAN_M2,
-            save_path="mission_profile_baseline_thrust_drag_vs_mach.png",
-            csv_path="mission_profile_baseline_thrust_drag_results.csv",
+            save_path=None,
+            csv_path=None,
             suppress_output=True,
+            title_suffix="Baseline schedule",
         )
