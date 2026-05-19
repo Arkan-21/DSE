@@ -55,7 +55,7 @@ csv_file = "density_velocity_database.csv"
 
 altitude = 25000.0  # [m]
 
-nose_radius = 0.003
+nose_radius = 0.03
 emissivity = 0.7
 plate_length = 20
 
