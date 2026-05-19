@@ -187,31 +187,39 @@ ALLOW_EXTRAPOLATION = False
 # =============================================================================
 # 1. DRAG MODEL WRAPPED AS FUNCTIONS
 # =============================================================================
-# This is your drag script turned into functions.
+# Updated from the standalone drag model, but keeping the old optimizer values
+# for W_TOG, S_PLAN, and S_WET as requested.
 
 G = 9.81
 R_GAS = 287.05
 GAMMA = 1.4
 
-# From your drag file.
-W_TOG = 90_000            # kg
-S_PLAN = 350              # m^2
-S_WET = 1050          # m^2
-MAC = 21.0                # m
-L_REF = 35.0              # m
-IF = 1.05
-t_over_c = 0.05
-sweep_deg = 35.0
+# Keep these from the old optimizer code.
+W_TOG = 90_000            # Aircraft gross weight / TOGW [kg]
+S_PLAN = 350              # Planform wing area [m^2]
+S_WET = 1050              # Wetted area [m^2]
+
+# Updated drag-model geometry/constants.
+MAC = 21.0                # Mean Aerodynamic Chord [m]
+L_REF = 35.0              # Characteristic length for high-speed Reynolds calculations [m]
+IF = 1.05                 # Interference factor [+5%]
+t_over_c = 0.05           # Relative thickness
+sweep_deg = 35.0          # Wing sweep [deg]
 sweep_rad = np.radians(sweep_deg)
-AR = 7.0
+AR = 7.0                  # Aspect ratio reference
 
 
 def atmosphere_drag(alt_m: float) -> tuple[float, float]:
     """
-    ISA-like atmosphere from your drag script.
+    Updated ISA-like atmosphere from the standalone drag script.
 
     Returns:
         rho [kg/m^3], T [K]
+
+    Note:
+        The uploaded drag model uses a simple fallback above 40 km instead of
+        raising an error. The mission target is 30 km, so this branch should not
+        normally affect the optimized profile.
     """
     g0 = 9.80665
     P0 = 101325.0
@@ -237,19 +245,20 @@ def atmosphere_drag(alt_m: float) -> tuple[float, float]:
         T = T20 + L3 * (alt_m - h20)
         P = P20 * (T / T20) ** (-g0 / (max(1e-4, L3) * R_GAS))
     else:
-        raise ValueError("This optimizer is configured for altitudes up to 40 km.")
+        T = 216.65
+        P = 1000.0
 
     rho = P / (R_GAS * T)
     return rho, T
 
 
 def reynolds_number(rho: float, v: float, temp: float, chord: float) -> float:
-    """Reynolds number using Sutherland's law."""
+    """Updated Reynolds-number calculation using Sutherland's law."""
     mu_0 = 1.7894e-5
     T_0 = 273.15
     S_suth = 110.4
     mu = mu_0 * (temp / T_0) ** 1.5 * (T_0 + S_suth) / (temp + S_suth)
-    return rho * v * chord / mu
+    return (rho * v * chord) / mu
 
 
 def drag_and_required_thrust_kN(
@@ -258,7 +267,7 @@ def drag_and_required_thrust_kN(
     accel_g: float = ACCEL_G_TARGET,
 ) -> dict:
     """
-    Aerodynamics and required thrust.
+    Updated drag model wrapped for the optimizer.
 
     Required thrust:
         T_req = Drag + W_TOG * accel_g * g
@@ -268,19 +277,21 @@ def drag_and_required_thrust_kN(
     """
     rho, T = atmosphere_drag(float(altitude_m))
     a = np.sqrt(GAMMA * R_GAS * T)
-    V = float(mach) * a
+    M = float(mach)
+    V = M * a
     q = 0.5 * rho * V**2
     q_safe = max(q, 1e-9)
 
     cl_needed = (W_TOG * G) / (q_safe * S_PLAN)
 
-    M = float(mach)
-
+    # ---------------------------------------------------------------------
+    # Aerodynamic regime switching logic from the updated drag model
+    # ---------------------------------------------------------------------
     if M < 1.2:
         regime = "transonic"
         Re_dyn = max(reynolds_number(rho, V, T, MAC), 10.0)
         cf_inc = 0.455 / (np.log10(Re_dyn) ** 2.58)
-        cf_comp = cf_inc / np.sqrt(1 + 0.12 * M**2)
+        cf_comp = cf_inc / (1 + 0.12 * M**2) ** 0.5
         cd_f = cf_comp * IF * (S_WET / S_PLAN)
 
         M_crit = 0.9 - 1.2 * t_over_c - 0.1 * (1 - np.cos(sweep_rad))
@@ -298,13 +309,13 @@ def drag_and_required_thrust_kN(
             cd_wave = amplitude_peak / np.sqrt(max(0.1, M**2 - 1.0))
 
         e_oswald = 0.85 - 0.02 * M
-        cd_induced = cl_needed**2 / (np.pi * AR * e_oswald)
+        cd_induced = (cl_needed**2) / (np.pi * AR * e_oswald)
         alpha_deg = np.degrees(cl_needed / (2 * np.pi * AR / (AR + 2)))
 
     else:
         regime = "supersonic" if M < 3.0 else "hypersonic"
 
-        # Supersonic model.
+        # Pure supersonic properties.
         Re_dyn_super = max(reynolds_number(rho, V, T, MAC), 10.0)
         cf_super = 0.455 / (np.log10(Re_dyn_super) ** 2.58)
         cd_f_super = cf_super * IF * (S_WET / S_PLAN)
@@ -312,23 +323,23 @@ def drag_and_required_thrust_kN(
         alpha_rad_super = np.sqrt(np.abs(cl_needed**0.75) / 2)
         cd_wave_super = 2 * np.sin(alpha_rad_super) ** 3
 
-        # Hypersonic model.
+        # Pure hypersonic properties.
         Re_dyn_hyper = max(reynolds_number(rho, V, T, L_REF), 10.0)
-        cf_hyper = (0.074 / (Re_dyn_hyper**0.2)) * ((1 / (1 + 0.15 * M**2)) ** 0.58)
+        cf_hyper = (0.074 / (Re_dyn_hyper ** 0.2)) * ((1 / (1 + 0.15 * M**2)) ** 0.58)
         cd_f_hyper = cf_hyper * 2.0
 
         cl_alpha_hyper = 4.0 / np.sqrt(max(0.01, M**2 - 1.0))
         alpha_rad_hyper = cl_needed / cl_alpha_hyper
         cd_wave_hyper = cl_needed * alpha_rad_hyper
 
-        # Smooth blend centered at Mach 3.
+        # Logistic blend centered at Mach 3.
         k = 7.0
         weight_hyper = 1.0 / (1.0 + np.exp(-k * (M - 3.0)))
         weight_super = 1.0 - weight_hyper
 
-        cd_f = cd_f_super * weight_super + cd_f_hyper * weight_hyper
-        cd_wave = cd_wave_super * weight_super + cd_wave_hyper * weight_hyper
-        alpha_rad = alpha_rad_super * weight_super + alpha_rad_hyper * weight_hyper
+        cd_f = (cd_f_super * weight_super) + (cd_f_hyper * weight_hyper)
+        cd_wave = (cd_wave_super * weight_super) + (cd_wave_hyper * weight_hyper)
+        alpha_rad = (alpha_rad_super * weight_super) + (alpha_rad_hyper * weight_hyper)
 
         cd_induced = 0.0
         alpha_deg = np.degrees(alpha_rad)
