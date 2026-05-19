@@ -52,7 +52,7 @@ class Params:
     altitude_DP_m: float = 20_000.0
 
     # Keep the paper's reference engine choices unless you change them here
-    m0_DP: float = 200.0        # kg/s
+    m0_DP: float = 250.0        # kg/s
     CPR_DP: float = 8.0        # compressor pressure ratio at design point
     Tt4_DP: float = 1800.0     # K, turbine inlet temperature at design point
 
@@ -375,31 +375,231 @@ def make_plot(df: pd.DataFrame, output_png: str = "thrust_vs_mach_altitude.png")
     plt.savefig(output_png, dpi=200)
     plt.show()
 
+# =============================================================================
+# THRUST + DRAG VS MACH FOR DIFFERENT ALTITUDES
+# =============================================================================
+# Turbojet thrust:
+#   Uses the paper-style turbojet model above, with design point M=2, h=20 km.
+#
+# Drag:
+#   Uses the drag model pasted in the prompt:
+#       W_TOG = 90,000 kg
+#       S_PLAN = 350 m²
+#       S_WET = 1000 m²
+#       MAC = 21 m
+#       IF = 1.05
+#       alpha_rad = sqrt(CL^0.75 / 2)
+#       cd_wave = 2 sin(alpha)^3
+#       cf = 0.455 / log10(Re)^2.58
+#       cd_f = cf * IF * S_WET/S_PLAN
+#
+# Plot:
+#   Mach range starts at M=1.2, as requested.
+# =============================================================================
+
+# --- Drag constants from the prompt ---
+W_TOG_DRAG = 90_000.0       # kg
+S_PLAN_DRAG = 350.0         # m²
+S_WET_DRAG = 1000.0         # m²
+MAC_DRAG = 21.0             # m
+IF_DRAG = 1.05
+ACCEL_G_DRAG = 0.15
+G_DRAG = 9.81
+
+
+def drag_atmosphere_prompt(alt_m: float) -> tuple[float, float]:
+    """
+    Atmosphere from the pasted drag code.
+    Returns rho [kg/m³], T [K].
+    """
+    alt_m = float(alt_m)
+    if alt_m <= 11000:
+        T = 288.15 - 0.0065 * alt_m
+        rho = 1.225 * (T / 288.15)**4.256
+    elif alt_m <= 25000:
+        T = 216.65
+        rho = 0.3639 * np.exp(-0.000157 * (alt_m - 11000))
+    else:
+        T = 216.65 + 0.003 * (alt_m - 25000)
+        rho = 0.0401 * (T / 216.65)**-11.388
+    return float(rho), float(T)
+
+
+def reynolds_prompt(rho: float, v: float, temp: float, chord: float) -> float:
+    """Reynolds number with Sutherland viscosity from the pasted drag code."""
+    mu_0 = 1.7894e-5
+    T_0 = 273.15
+    S_suth = 110.4
+    mu = mu_0 * (temp / T_0)**1.5 * (T_0 + S_suth) / (temp + S_suth)
+    return float((rho * v * chord) / mu)
+
+
+def drag_breakdown_prompt(M: float, altitude_m: float) -> dict[str, float]:
+    """
+    Drag and required thrust calculation from the pasted drag model.
+
+    Returns drag only and drag + 0.15g acceleration requirement.
+    """
+    M = float(M)
+    rho, T = drag_atmosphere_prompt(altitude_m)
+    a = np.sqrt(1.4 * 287.0 * T)
+    V = M * a
+    q = 0.5 * rho * V**2
+
+    cl_needed = (W_TOG_DRAG * G_DRAG) / max(q * S_PLAN_DRAG, 1e-30)
+
+    # Same as pasted code:
+    alpha_rad = np.sqrt((cl_needed**0.75) / 2.0)
+    cd_wave = 2.0 * np.sin(alpha_rad)**3
+
+    Re_dyn = reynolds_prompt(rho, V, T, MAC_DRAG)
+    cf = 0.455 / (np.log10(Re_dyn)**2.58)
+    cd_f = cf * IF_DRAG * (S_WET_DRAG / S_PLAN_DRAG)
+
+    cd_total = cd_f + cd_wave
+    drag_force_N = q * S_PLAN_DRAG * cd_total
+    drag_friction_N = q * S_PLAN_DRAG * cd_f
+    drag_wave_N = q * S_PLAN_DRAG * cd_wave
+    thrust_required_N = drag_force_N + (W_TOG_DRAG * ACCEL_G_DRAG * G_DRAG)
+
+    return {
+        "M": M,
+        "altitude_m": float(altitude_m),
+        "rho": rho,
+        "T": T,
+        "V": float(V),
+        "q": float(q),
+        "CL": float(cl_needed),
+        "alpha_deg": float(np.degrees(alpha_rad)),
+        "Re": float(Re_dyn),
+        "cf": float(cf),
+        "cd_f": float(cd_f),
+        "cd_wave": float(cd_wave),
+        "cd_total": float(cd_total),
+        "drag_N": float(drag_force_N),
+        "drag_kN": float(drag_force_N / 1000.0),
+        "drag_friction_kN": float(drag_friction_N / 1000.0),
+        "drag_wave_kN": float(drag_wave_N / 1000.0),
+        "thrust_required_0p15g_N": float(thrust_required_N),
+        "thrust_required_0p15g_kN": float(thrust_required_N / 1000.0),
+    }
+
+
+def make_thrust_drag_altitude_plot(
+    machs: np.ndarray | None = None,
+    altitudes_m: np.ndarray | None = None,
+    n_ratio: float = 1.0,
+    p: Params = P,
+    output_png: str = "thrust_drag_vs_mach_altitudes.png",
+    output_csv: str = "thrust_drag_vs_mach_altitudes.csv",
+):
+    """
+    Plot turbojet thrust and aircraft drag versus Mach number for different altitudes.
+    """
+    if machs is None:
+        machs = np.linspace(1.2, 3.5, 80)
+    if altitudes_m is None:
+        altitudes_m = np.array([0, 5_000, 10_000, 15_000, 17_000, 20_000, 25_000], dtype=float)
+
+    dp = design_point(p)
+    rows = []
+
+    for h in altitudes_m:
+        for M in machs:
+            tj = off_design(float(M), float(h), n_ratio, dp, p)
+            dr = drag_breakdown_prompt(float(M), float(h))
+
+            N_TURBOJET_ENGINES = 2
+            thrust_kN = N_TURBOJET_ENGINES * float(tj.get("thrust_kN", np.nan))
+            drag_kN = dr["drag_kN"]
+            required_kN = dr["thrust_required_0p15g_kN"]
+
+            rows.append({
+                "Mach": float(M),
+                "altitude_m": float(h),
+                "altitude_km": float(h) / 1000.0,
+                "turbojet_thrust_kN": thrust_kN,
+                "drag_kN": drag_kN,
+                "required_thrust_0p15g_kN": required_kN,
+                "net_vs_drag_kN": thrust_kN - drag_kN if np.isfinite(thrust_kN) else np.nan,
+                "net_vs_0p15g_req_kN": thrust_kN - required_kN if np.isfinite(thrust_kN) else np.nan,
+                "CL": dr["CL"],
+                "alpha_deg": dr["alpha_deg"],
+                "cd_total": dr["cd_total"],
+                "cd_f": dr["cd_f"],
+                "cd_wave": dr["cd_wave"],
+                "drag_friction_kN": dr["drag_friction_kN"],
+                "drag_wave_kN": dr["drag_wave_kN"],
+                "turbojet_valid": bool(tj.get("valid", True)),
+                "turbojet_reason": tj.get("reason", "ok"),
+                "m0_turbojet_kg_s": float(tj.get("m0", np.nan)),
+                "CPR": float(tj.get("CPR", np.nan)),
+                "Tt4_K": float(tj.get("Tt4", np.nan)),
+            })
+
+    try:
+        import pandas as pd
+        df = pd.DataFrame(rows)
+        df.to_csv(output_csv, index=False)
+    except Exception:
+        df = rows
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 7.5))
+
+    for h in altitudes_m:
+        if hasattr(df, "loc"):
+            sub = df[df["altitude_m"] == float(h)].sort_values("Mach")
+            M_arr = sub["Mach"].to_numpy()
+            T_arr = sub["turbojet_thrust_kN"].to_numpy()
+            D_arr = sub["drag_kN"].to_numpy()
+            R_arr = sub["required_thrust_0p15g_kN"].to_numpy()
+        else:
+            sub = [r for r in rows if r["altitude_m"] == float(h)]
+            M_arr = np.array([r["Mach"] for r in sub])
+            T_arr = np.array([r["turbojet_thrust_kN"] for r in sub])
+            D_arr = np.array([r["drag_kN"] for r in sub])
+            R_arr = np.array([r["required_thrust_0p15g_kN"] for r in sub])
+
+        label_h = f"{h/1000:.0f} km"
+        ax.plot(M_arr, T_arr, linewidth=2.2, label=f"Turbojet thrust {label_h}")
+        ax.plot(M_arr, D_arr, linestyle="--", linewidth=1.7, label=f"Drag {label_h}")
+        ax.plot(M_arr, R_arr, linestyle=":", linewidth=1.5, label=f"Drag + 0.15g {label_h}")
+
+    ax.axvline(3.0, color="black", linestyle="-.", linewidth=1.5, label="M=3 reference")
+    ax.set_xlabel("Mach number [-]")
+    ax.set_ylabel("Force [kN]")
+    ax.set_title(
+        "Turbojet thrust and drag vs Mach number for different altitudes\n"
+        "Mach range starts at M=1.2; drag model from pasted supersonic estimate"
+    )
+    ax.grid(True, alpha=0.35)
+    ax.legend(ncol=2, fontsize=7.5)
+    fig.tight_layout()
+    fig.savefig(output_png, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    print("Design point:")
+    print(f"  M0 = {dp['M0']:.2f}, altitude = {dp['altitude_m']/1000:.1f} km")
+    print(f"  Tt4_DP = {dp['Tt4']:.1f} K, m0_DP = {dp['m0']:.3f} kg/s")
+    print(f"  Design thrust = {dp['thrust_kN']:.3f} kN")
+    print()
+    print("Saved:")
+    print(f"  {output_png}")
+    print(f"  {output_csv}")
+
+    return df
+
 
 if __name__ == "__main__":
-    machs = np.linspace(0.0, 3.5, 36)
-    altitudes_m = np.array([0, 5_000, 10_000, 15_000, 20_000, 25_000], dtype=float)
-    n_ratio = 1.0
+    machs = np.linspace(1.2, 3.5, 80)
+    altitudes_m = np.array([0, 5_000, 10_000, 15_000, 17_000, 20_000, 25_000], dtype=float)
 
-    dp, df = run_sweep(machs, altitudes_m, n_ratio=n_ratio, p=P)
-
-    print("DESIGN POINT")
-    print(f"  M0             = {dp['M0']:.3f}")
-    print(f"  altitude       = {dp['altitude_m']/1000:.1f} km")
-    print(f"  ISA T0         = {dp['T0']:.2f} K")
-    print(f"  ISA P0         = {dp['P0']:.2f} Pa")
-    print(f"  Tt0            = {dp['Tt0']:.2f} K")
-    print(f"  Pt0            = {dp['Pt0']:.2f} Pa")
-    print(f"  m0_DP          = {dp['m0']:.4f} kg/s")
-    print(f"  CPR_DP         = {dp['CPR']:.4f}")
-    print(f"  Tt4_DP         = {dp['Tt4']:.2f} K")
-    print(f"  A4_min         = {dp['A4_min']:.6f} m^2")
-    print(f"  A9_min         = {dp['A9_min']:.6f} m^2")
-    print(f"  Design thrust  = {dp['thrust_kN']:.4f} kN")
-
-    df.to_csv("turbojet_mach_altitude_results.csv", index=False)
-    make_plot(df, "thrust_vs_mach_altitude.png")
-
-    print("\nSaved:")
-    print("  thrust_vs_mach_altitude.png")
-    print("  turbojet_mach_altitude_results.csv")
+    make_thrust_drag_altitude_plot(
+        machs=machs,
+        altitudes_m=altitudes_m,
+        n_ratio=1.0,
+        p=P,
+        output_png="thrust_drag_vs_mach_altitudes.png",
+        output_csv="thrust_drag_vs_mach_altitudes.csv",
+    )

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, differential_evolution
+from functools import lru_cache
 from scipy.integrate import solve_ivp
 from scipy.interpolate import PchipInterpolator
 
@@ -689,7 +690,7 @@ class Ramjet:
     # the fixed capture area: mdot = rho_inf * V_inf * A0_design.
     DESIGN_MACH      = 4.0
     DESIGN_ALTITUDE  = 25_000.0   # m
-    DESIGN_MDOT_AIR  = 200.0      # kg/s per engine fallback
+    DESIGN_MDOT_AIR  = 300.0      # kg/s per engine fallback
     USE_FIXED_CAPTURE_AREA = True
  
     def __init__(self):
@@ -1666,7 +1667,7 @@ def run_ramjet_single_point(
 def run_ramjet_thrust_sweep(
     altitudes_km: np.ndarray | list[float] | None = None,
     mach_values: np.ndarray | list[float] | None = None,
-    mdot: float = 200.0,
+    mdot: float = 300.0,
     phi: float = 0.5,
     suppress_output: bool = True,
 ) -> tuple[np.ndarray, list[dict[str, float | bool | str]]]:
@@ -1745,7 +1746,7 @@ def run_ramjet_thrust_sweep(
 def plot_ramjet_thrust_vs_mach_sweep(
     altitudes_km: np.ndarray | list[float] | None = None,
     mach_values: np.ndarray | list[float] | None = None,
-    mdot: float = 200.0,
+    mdot: float = 300.0,
     phi: float = 0.5,
     suppress_output: bool = True,
     make_contour: bool = True,
@@ -1935,9 +1936,9 @@ class _TurboParams:
     altitude_DP_m: float = 20_000.0
 
     # Current sizing from the previous code: two 150 kg/s engines.
-    m0_DP: float = 2 * 150.0
+    m0_DP: float = 150.0
     CPR_DP: float = 8.0
-    Tt4_DP: float = 1300.0
+    Tt4_DP: float = 1800.0
 
 
 _TP = _TurboParams()
@@ -2160,26 +2161,69 @@ def _turbo_off_design(M0: float, altitude_m: float, n_ratio: float, dp: _Dict[st
 _TURBO_DP = _turbo_design_point(_TP)
 
 
+def make_turbo_params(
+    m0_DP: float | None = None,
+    CPR_DP: float | None = None,
+    Tt4_DP: float | None = None,
+    sigma_inlet: float | None = None,
+) -> _TurboParams:
+    """
+    Create a turbojet parameter set while keeping unspecified values equal to the baseline.
+
+    The optimizer uses this instead of changing ramjet parameters, because the
+    limiting part of the mission is the turbojet segment from Mach 1.2 to Mach 3.0.
+    """
+    return _TurboParams(
+        air=_TP.air,
+        gas=_TP.gas,
+        cpB=_TP.cpB,
+        FHV=_TP.FHV,
+        sigma_inlet=_TP.sigma_inlet if sigma_inlet is None else float(sigma_inlet),
+        sigma_burner=_TP.sigma_burner,
+        sigma_ab_off=_TP.sigma_ab_off,
+        sigma_nozzle=_TP.sigma_nozzle,
+        eta_compressor=_TP.eta_compressor,
+        eta_turbine=_TP.eta_turbine,
+        eta_burner=_TP.eta_burner,
+        eta_mech=_TP.eta_mech,
+        M0_DP=_TP.M0_DP,
+        altitude_DP_m=_TP.altitude_DP_m,
+        m0_DP=_TP.m0_DP if m0_DP is None else float(m0_DP),
+        CPR_DP=_TP.CPR_DP if CPR_DP is None else float(CPR_DP),
+        Tt4_DP=_TP.Tt4_DP if Tt4_DP is None else float(Tt4_DP),
+    )
+
+
+@lru_cache(maxsize=512)
+def _cached_turbo_design_point_for_params(p: _TurboParams) -> _Dict[str, float]:
+    return _turbo_design_point(p)
+
+
 def turbo_thrust_curve_vs_mach(
     altitude_m: float,
     mach_values: np.ndarray,
     clamp_negative_thrust: bool = True,
+    turbo_params: _TurboParams | None = None,
 ) -> np.ndarray:
     """
     Turbojet thrust curve from the paper-style off-design cycle model.
 
-    Returns thrust in kN.
+    Returns thrust in kN. If turbo_params is supplied, the curve is evaluated
+    for that turbojet design instead of the baseline global _TP design.
     """
     M_values = np.asarray(mach_values, dtype=float)
     thrust_kN = []
+
+    p_use = _TP if turbo_params is None else turbo_params
+    dp_use = _TURBO_DP if turbo_params is None else _cached_turbo_design_point_for_params(p_use)
 
     for M in M_values:
         result = _turbo_off_design(
             M0=float(M),
             altitude_m=float(altitude_m),
             n_ratio=1.0,
-            dp=_TURBO_DP,
-            p=_TP,
+            dp=dp_use,
+            p=p_use,
         )
         T = float(result.get("thrust_kN", np.nan))
         if clamp_negative_thrust and np.isfinite(T):
@@ -2193,6 +2237,7 @@ def turbo_thrust_at_mach_altitudes(
     mach_fixed: float,
     altitude_values_m: np.ndarray,
     clamp_negative_thrust: bool = True,
+    turbo_params: _TurboParams | None = None,
 ) -> np.ndarray:
     """
     Turbojet thrust at one fixed Mach number for many altitudes.
@@ -2203,6 +2248,7 @@ def turbo_thrust_at_mach_altitudes(
             altitude_m=h,
             mach_values=np.array([mach_fixed]),
             clamp_negative_thrust=clamp_negative_thrust,
+            turbo_params=turbo_params,
         )[0]
         for h in altitude_values_m
     ], dtype=float)
@@ -2211,8 +2257,8 @@ def turbo_thrust_at_mach_altitudes(
 def ramjet_cycle_thrust_at_mach_altitudes(
     mach_fixed: float,
     altitude_values_m: np.ndarray,
-    mdot: float = 200.0,
-    phi: float = 0.5,
+    mdot: float = 300.0,
+    phi: float = 0.7,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
 ) -> np.ndarray:
@@ -2243,6 +2289,7 @@ def ramjet_cycle_thrust_at_mach_altitudes(
             mdot=mdot,
             phi=phi,
             suppress_output=suppress_output,
+            turbo_params=turbo_params,
         )
 
         if out["success"]:
@@ -2275,7 +2322,7 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
     mach_max: float = 6.0,
     n_mach: int = 800,
     mdot: float = 100.0,
-    phi: float = 0.5,
+    phi: float = 0.7,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
     clamp_negative_turbo_thrust: bool = True,
@@ -2500,7 +2547,8 @@ def plot_turbo_polynomial_and_ramjet_cycle_mach_line(
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, differential_evolution
+from functools import lru_cache
 from scipy.integrate import solve_ivp
 import pandas as pd
 
@@ -3924,7 +3972,7 @@ def altitude_mach(self, h_km, Ma0):
     inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
     iso  = eng.isolator_properties(inp)
     sec2 = eng.combustor_properties2(iso)
-    sec3 = eng.combustor_properties3(sec2, phi=0.5)
+    sec3 = eng.combustor_properties3(sec2, phi=0.7)
     sec4 = eng.combustor_properties4(sec3)
     sec5 = eng.nozzle_properties(sec4, inp)
     perf = eng.performance(inp, sec5, sec3)
@@ -4040,7 +4088,7 @@ def run_altitude_mach_map(eng):
 # ---------------------------------------------------------------------------
 # 2) Mass flow sweep
 # ---------------------------------------------------------------------------
-def run_mdot_sweep(eng, h_km=25.0, Ma0=5.0, phi=0.5):
+def run_mdot_sweep(eng, h_km=25.0, Ma0=5.0, phi=0.7):
 
     mdot_range = np.arange(1.0, 500.0, 10.0)
 
@@ -4124,7 +4172,7 @@ def run_scramjet_single_point(
     h_km: float,
     Ma0: float,
     mdot: float = 100.0,
-    phi: float = 0.5,
+    phi: float = 0.7,
     suppress_output: bool = True,
 ) -> dict[str, float | bool | str]:
     """
@@ -4212,8 +4260,8 @@ def run_scramjet_single_point(
 def ramjet_cycle_thrust_at_mach_altitudes_for_mach5(
     mach_fixed: float,
     altitude_values_m: np.ndarray,
-    mdot: float = 200.0,
-    phi: float = 0.5,
+    mdot: float = 300.0,
+    phi: float = 0.7,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
 ) -> np.ndarray:
@@ -4266,7 +4314,7 @@ def scramjet_cycle_thrust_at_mach_altitudes(
     mach_fixed: float,
     altitude_values_m: np.ndarray,
     mdot: float = 100.0,
-    phi: float = 0.5,
+    phi: float = 0.7,
     n_scramjet_engines: int = 1,
     suppress_output: bool = True,
 ) -> np.ndarray:
@@ -4318,9 +4366,9 @@ def scramjet_cycle_thrust_at_mach_altitudes(
 def plot_ramjet_scramjet_cycle_mach_line(
     altitude_values_m: np.ndarray | None = None,
     mach_fixed: float = 5.0,
-    mdot_ramjet: float = 200.0,
+    mdot_ramjet: float = 300.0,
     mdot_scramjet: float = 100.0,
-    phi_ramjet: float = 0.5,
+    phi_ramjet: float = 0.7,
     phi_scramjet: float = 0.5,
     n_ramjet_engines: int = 2,
     n_scramjet_engines: int = 1,
@@ -4789,7 +4837,7 @@ def plot_turbo_ramjet_mach3_with_drag(
     mach_max: float = 6.0,
     n_mach: int = 800,
     mdot: float = 100.0,
-    phi: float = 0.5,
+    phi: float = 0.7,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
     clamp_negative_turbo_thrust: bool = True,
@@ -4989,8 +5037,8 @@ def plot_turbo_ramjet_mach3_with_drag(
 def plot_mach3_thrust_drag_vs_altitude(
     altitude_values_m: np.ndarray | None = None,
     mach_fixed: float = 3.0,
-    mdot: float = 200.0,
-    phi: float = 0.5,
+    mdot: float = 300.0,
+    phi: float = 0.7,
     n_ramjet_engines: int = 2,
     suppress_output: bool = True,
     clamp_negative_turbo_thrust: bool = True,
@@ -5142,7 +5190,7 @@ def plot_ramjet_scramjet_mach5_with_drag(
     mach_fixed: float = 5.0,
     mdot_ramjet: float = 100.0,
     mdot_scramjet: float = 100.0,
-    phi_ramjet: float = 0.5,
+    phi_ramjet: float = 0.7,
     phi_scramjet: float = 0.5,
     n_ramjet_engines: int = 2,
     n_scramjet_engines: int = 1,
@@ -5326,20 +5374,738 @@ def plot_ramjet_scramjet_mach5_with_drag(
 # Run Mach-3 altitude plot
 # =============================================================================
 
-if __name__ == "__main__":
 
-    # Mach 3 transition study: force vs altitude.
-    S_ref = 400.0
-    altitude_values_m_mach3 = np.linspace(12_000.0, 22_000.0, 21)
+# =============================================================================
+# Mission-profile thrust and drag vs Mach
+# =============================================================================
 
-    results_mach3_altitude = plot_mach3_thrust_drag_vs_altitude(
-        altitude_values_m=altitude_values_m_mach3,
-        mach_fixed=3.0,
-        mdot=200.0,
-        phi=0.5,
-        n_ramjet_engines=2,
+# Mission considered here:
+#   - M = 1.2 to 2.2 at h = 10 km using turbojet
+#   - M = 2.2 to 3.0 climbing from 10 km to 17 km using turbojet
+#   - M = 3.0 to 5.0 climbing from 17 km to 30 km using ramjet
+#   - no scramjet segment included
+#
+# Drag model:
+#   - M <= 3.0: previous supersonic trimmed-drag model in this file
+#   - M > 3.0: attached M=3..6 high-speed drag formulation:
+#       CL from lift = weight
+#       CL_alpha = 4 / sqrt(M^2 - 1)
+#       alpha = CL / CL_alpha
+#       CD_press = CL * alpha
+#       Cf = 0.074 / Re^0.2 * (1 / (1 + 0.15 M^2))^0.58
+#       CD_f = Cf * S_wet/S_ref
+#
+# Units:
+#   Forces returned/plotted in kN.
+# =============================================================================
+
+MISSION_W_TOG_KG = 90_000.0
+MISSION_S_PLAN_M2 = 350.0
+MISSION_ACCEL_G = 0.15
+MISSION_L_REF_M = 35.0
+MISSION_S_WET_OVER_S_REF = 2.0
+N_TURBOJET_ENGINES = 2
+
+
+def mission_altitude_from_mach(M: float) -> float:
+    """
+    Mission altitude schedule [m].
+
+    New profile:
+    - Start considering the mission at M = 1.2, h = 10 km.
+    - Accelerate horizontally from M = 1.2 to M = 2.2 at h = 10 km using turbojet.
+    - From M = 2.2 to M = 3.0, climb from h = 10 km to h = 17 km using turbojet.
+    - From M = 3.0 to M = 5.0, ramjet takes over and climbs from h = 17 km to h = 30 km.
+    """
+    M = float(M)
+    if M <= 2.2:
+        return 10_000.0
+    if M <= 3.0:
+        return 10_000.0 + (M - 2.2) / (3.0 - 2.2) * (17_000.0 - 10_000.0)
+    if M >= 5.0:
+        return 30_000.0
+    return 17_000.0 + (M - 3.0) / (5.0 - 3.0) * (30_000.0 - 17_000.0)
+
+
+def _mission_viscosity_sutherland(T: float) -> float:
+    """Sutherland viscosity from the attached high-speed drag script."""
+    return 1.458e-6 * T**1.5 / (T + 110.4)
+
+
+def highspeed_drag_breakdown_attached_model(
+    M: float,
+    altitude_m: float,
+    S_ref: float = MISSION_S_PLAN_M2,
+    W_tog_kg: float = MISSION_W_TOG_KG,
+) -> dict[str, float]:
+    """
+    Attached high-speed drag model, generalized from fixed 30 km to any
+    altitude on the M=3..5 climb profile.
+
+    This follows the user's attached code for M=3..6:
+        CL = W/(qS)
+        CL_alpha = 4/sqrt(M^2-1)
+        alpha = CL/CL_alpha
+        CD_press = CL*alpha
+        Cf compressibility corrected turbulent flat plate
+        CD_total = CD_f + CD_press
+    """
+    M = float(M)
+    h = float(altitude_m)
+    T_inf, P_inf, rho_inf = Atmosphere.T(h), Atmosphere.P(h), Atmosphere.rho(h)
+    V = M * np.sqrt(1.4 * 287.0 * T_inf)
+    q = 0.5 * rho_inf * V**2
+
+    lift_needed_N = W_tog_kg * 9.81
+    cl_needed = lift_needed_N / max(q * S_ref, 1e-30)
+
+    # Supersonic/hypersonic lift slope from the attached code.
+    cl_alpha = 4.0 / np.sqrt(max(M**2 - 1.0, 1e-12))
+    alpha_rad = cl_needed / cl_alpha
+
+    cd_press = cl_needed * alpha_rad
+
+    mu_inf = _mission_viscosity_sutherland(T_inf)
+    Re = rho_inf * V * MISSION_L_REF_M / max(mu_inf, 1e-30)
+    cf = (0.074 / max(Re, 1e-30)**0.2) * ((1.0 / (1.0 + 0.15 * M**2))**0.58)
+    cd_f = cf * MISSION_S_WET_OVER_S_REF
+
+    cd_total = cd_f + cd_press
+    D_N = q * S_ref * cd_total
+
+    return {
+        "T": float(T_inf),
+        "P": float(P_inf),
+        "rho": float(rho_inf),
+        "V": float(V),
+        "q": float(q),
+        "CL": float(cl_needed),
+        "CL_alpha": float(cl_alpha),
+        "alpha_rad": float(alpha_rad),
+        "alpha_deg": float(np.degrees(alpha_rad)),
+        "Re": float(Re),
+        "cf": float(cf),
+        "cd_f": float(cd_f),
+        "cd_pressure": float(cd_press),
+        "cd_total": float(cd_total),
+        "D_N": float(D_N),
+        "D_kN": float(D_N / 1000.0),
+        "D_friction_kN": float(q * S_ref * cd_f / 1000.0),
+        "D_pressure_kN": float(q * S_ref * cd_press / 1000.0),
+    }
+
+
+def mission_drag_breakdown(
+    M: float,
+    altitude_m: float,
+    S_ref: float = MISSION_S_PLAN_M2,
+) -> dict[str, float]:
+    """
+    Piecewise mission drag:
+      - M <= 3.0: earlier supersonic trimmed-drag estimate.
+      - M > 3.0: attached high-speed drag estimate.
+    """
+    if float(M) <= 3.0:
+        b = drag_breakdown_from_mach_altitude(M=M, altitude_m=altitude_m, S_ref=S_ref)
+        return {
+            **b,
+            "D_pressure_kN": float(b.get("D_wave_kN", np.nan)),
+            "D_friction_kN": float(b.get("D_friction_kN", np.nan)),
+            "model": "supersonic_previous",
+        }
+
+    b = highspeed_drag_breakdown_attached_model(M=M, altitude_m=altitude_m, S_ref=S_ref)
+    return {**b, "model": "attached_highspeed"}
+
+
+
+# =============================================================================
+# Mission-profile optimization
+# =============================================================================
+
+
+def mission_altitude_from_mach_param(
+    M: float,
+    h_start_m: float,
+    h_m3_m: float,
+    h_end_m: float,
+    M_turbo_climb_start: float = 2.2,
+    M_ram_start: float = 3.0,
+    M_end: float = 5.0,
+) -> float:
+    """
+    Parametric mission altitude schedule [m] for optimization.
+
+    - M = 1.2 to 2.2: constant h_start_m.
+    - M = 2.2 to 3.0: linear climb from h_start_m to h_m3_m.
+    - M = 3.0 to 5.0: linear climb from h_m3_m to h_end_m.
+    """
+    M = float(M)
+    if M <= M_turbo_climb_start:
+        return float(h_start_m)
+    if M <= M_ram_start:
+        frac = (M - M_turbo_climb_start) / (M_ram_start - M_turbo_climb_start)
+        return float(h_start_m + frac * (h_m3_m - h_start_m))
+    if M >= M_end:
+        return float(h_end_m)
+    frac = (M - M_ram_start) / (M_end - M_ram_start)
+    return float(h_m3_m + frac * (h_end_m - h_m3_m))
+
+
+@lru_cache(maxsize=512)
+def _cached_ramjet_total_thrust_kN(
+    M_rounded: float,
+    h_km_rounded: float,
+    mdot_design_rounded: float,
+    phi_rounded: float,
+    n_ramjet_engines: int,
+) -> float:
+    """
+    Cached ramjet point evaluation.
+
+    The ramjet/CEA/Shapiro model is expensive and may be noisy during global
+    optimization. Rounding the inputs makes repeated optimizer calls reuse
+    previously calculated results.
+    """
+    out = run_ramjet_single_point(
+        h_km=float(h_km_rounded),
+        Ma0=float(M_rounded),
+        mdot=float(mdot_design_rounded),
+        phi=float(phi_rounded),
         suppress_output=True,
-        clamp_negative_turbo_thrust=True,
-        S_ref=S_ref,
-        save_path="mach3_thrust_drag_vs_altitude.png",
     )
+    if not out.get("success", False):
+        return float("nan")
+    return float(n_ramjet_engines) * float(out["Thrust_kN"])
+
+
+def mission_point_performance(
+    M: float,
+    altitude_m: float,
+    ramjet_mdot_design: float = 200.0,
+    ramjet_phi: float = 0.5,
+    n_ramjet_engines: int = 2,
+    S_ref: float = MISSION_S_PLAN_M2,
+    turbo_params: _TurboParams | None = None,
+) -> dict[str, float]:
+    """
+    Evaluate thrust, drag, required thrust, and thrust margins at one mission point.
+
+    For M <= 3, turbojets are used. For M > 3, ramjets are used.
+    The required thrust includes the drag plus the configured 0.15 g acceleration
+    excess-thrust requirement.
+    """
+    M = float(M)
+    altitude_m = float(altitude_m)
+
+    drag = mission_drag_breakdown(M=M, altitude_m=altitude_m, S_ref=S_ref)
+    drag_kN = float(drag["D_kN"])
+    required_kN = drag_kN + MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
+
+    if M <= 3.0:
+        thrust_one_engine_kN = turbo_thrust_curve_vs_mach(
+            altitude_m=altitude_m,
+            mach_values=np.array([M], dtype=float),
+            clamp_negative_thrust=True,
+            turbo_params=turbo_params,
+        )[0]
+        thrust_kN = float(N_TURBOJET_ENGINES) * float(thrust_one_engine_kN)
+        engine = "turbojet"
+        ramjet_mdot_actual = np.nan
+    else:
+        thrust_kN = _cached_ramjet_total_thrust_kN(
+            round(M, 3),
+            round(altitude_m / 1000.0, 3),
+            round(float(ramjet_mdot_design), 2),
+            round(float(ramjet_phi), 4),
+            int(n_ramjet_engines),
+        )
+        engine = "ramjet"
+        ramjet_mdot_actual = np.nan
+
+    return {
+        "M": M,
+        "altitude_m": altitude_m,
+        "altitude_km": altitude_m / 1000.0,
+        "engine": engine,
+        "thrust_kN": float(thrust_kN),
+        "drag_kN": drag_kN,
+        "required_thrust_0p15g_kN": required_kN,
+        "net_vs_drag_kN": float(thrust_kN - drag_kN),
+        "net_vs_0p15g_req_kN": float(thrust_kN - required_kN),
+        "alpha_deg": float(drag.get("alpha_deg", np.nan)),
+        "CL": float(drag.get("CL", np.nan)),
+        "drag_model": drag.get("model", ""),
+        "ramjet_mdot_actual_kg_s_per_engine": float(ramjet_mdot_actual),
+    }
+
+
+def mission_optimization_objective(
+    x: np.ndarray,
+    vital_mach: np.ndarray | None = None,
+    verbose: bool = False,
+) -> float:
+    """
+    Objective for mission-profile optimization with TURBOJET MASS-FLOW sizing only.
+
+    Decision variables:
+        x[0] = h_start_km, altitude from M=1.2 to M=2.2
+        x[1] = h_M3_km, altitude at ramjet takeover, M=3.0
+        x[2] = h_M5_km, altitude at final mission point, M=5.0
+        x[3] = turbojet design mass flow per engine, m0_DP [kg/s]
+
+    Fixed turbojet parameters:
+        CPR_DP = _TP.CPR_DP
+        Tt4_DP = _TP.Tt4_DP
+
+    Ramjet settings are also intentionally fixed here. The optimizer now attacks
+    the weak part of the trajectory by changing altitude schedule and turbojet
+    mass-flow sizing, without using CPR or turbine inlet temperature as fudge factors.
+    """
+    h_start_km, h_M3_km, h_M5_km, turbo_m0_DP = map(float, x)
+
+    turbo_CPR_DP = float(_TP.CPR_DP)
+    turbo_Tt4_DP = float(_TP.Tt4_DP)
+
+    # Hard constraints / sanity checks.
+    if not (8.0 <= h_start_km <= 14.0):
+        return 1.0e9
+    if not (h_start_km <= h_M3_km <= h_M5_km):
+        return 1.0e9
+    if not (14.0 <= h_M3_km <= 22.0):
+        return 1.0e9
+    if not (24.0 <= h_M5_km <= 32.0):
+        return 1.0e9
+    if not (120.0 <= turbo_m0_DP <= 650.0):
+        return 1.0e9
+
+    turbo_params = make_turbo_params(
+        m0_DP=turbo_m0_DP,
+        CPR_DP=turbo_CPR_DP,
+        Tt4_DP=turbo_Tt4_DP,
+    )
+
+    if vital_mach is None:
+        # Dense in turbojet region because that is the limiting part.
+        # The optimizer does not call the ramjet/CEA model; ramjet settings are
+        # fixed and only used later when plotting the full mission.
+        vital_mach = np.array([1.2, 1.6, 2.0, 2.2, 2.6, 3.0], dtype=float)
+
+    weights = {
+        1.2: 2.0,
+        1.6: 2.0,
+        2.0: 2.5,
+        2.2: 3.0,
+        2.6: 3.0,
+        3.0: 4.0,   # propulsion transition is critical
+    }
+
+    residuals = []
+    penalty = 0.0
+    rows = []
+
+    # Ramjet is fixed and not used inside the optimizer.
+    fixed_ramjet_mdot_design = 200.0
+    fixed_ramjet_phi = 0.5
+
+    for M in vital_mach:
+        altitude_m = mission_altitude_from_mach_param(
+            M=float(M),
+            h_start_m=h_start_km * 1000.0,
+            h_m3_m=h_M3_km * 1000.0,
+            h_end_m=h_M5_km * 1000.0,
+        )
+        perf = mission_point_performance(
+            M=float(M),
+            altitude_m=altitude_m,
+            ramjet_mdot_design=fixed_ramjet_mdot_design,
+            ramjet_phi=fixed_ramjet_phi,
+            n_ramjet_engines=2,
+            S_ref=MISSION_S_PLAN_M2,
+            turbo_params=turbo_params,
+        )
+        rows.append(perf)
+
+        thrust_kN = perf["thrust_kN"]
+        required_kN = max(perf["required_thrust_0p15g_kN"], 1.0)
+        margin_kN = perf["net_vs_0p15g_req_kN"]
+
+        if not np.isfinite(thrust_kN):
+            return 1.0e8
+
+        # Force the optimizer to close the turbojet thrust gap.
+        w = weights.get(round(float(M), 1), 1.0)
+        residuals.append(np.sqrt(w) * margin_kN / required_kN)
+
+        # Strongly penalize under-powered turbojet points.
+        if margin_kN < 0.0:
+            penalty += 25.0 * abs(margin_kN) / required_kN
+
+        # Soft penalty for excessive angle of attack.
+        alpha_deg = perf.get("alpha_deg", np.nan)
+        if np.isfinite(alpha_deg) and alpha_deg > 10.0:
+            penalty += ((alpha_deg - 10.0) / 5.0) ** 2
+
+    # Soft design penalty so the optimizer does not simply choose an absurdly huge engine.
+    # CPR and Tt4 are intentionally fixed and do not appear in this penalty.
+    penalty += 0.02 * ((turbo_m0_DP - _TP.m0_DP) / 100.0) ** 2
+
+    residuals = np.array(residuals, dtype=float)
+    objective = float(np.mean(residuals**2) + penalty)
+
+    if verbose:
+        print("\nMission optimization evaluation — turbojet m0 only")
+        print("------------------------------------------------")
+        print(f"h_start       = {h_start_km:.3f} km")
+        print(f"h_M3          = {h_M3_km:.3f} km")
+        print(f"h_M5          = {h_M5_km:.3f} km")
+        print(f"turbo m0_DP   = {turbo_m0_DP:.3f} kg/s per turbojet")
+        print(f"turbo CPR_DP  = {turbo_CPR_DP:.3f}, fixed")
+        print(f"turbo Tt4_DP  = {turbo_Tt4_DP:.1f} K, fixed")
+        print("ramjet mdot   = 200.000 kg/s per ramjet, fixed")
+        print("ramjet phi    = 0.5000, fixed")
+        print(f"objective     = {objective:.6g}")
+        print(f"{'M':>5s} {'h[km]':>8s} {'engine':>9s} {'T[kN]':>10s} {'D[kN]':>10s} {'Req[kN]':>10s} {'Margin[kN]':>12s} {'alpha[deg]':>11s}")
+        for row in rows:
+            print(
+                f"{row['M']:5.2f} {row['altitude_km']:8.3f} {row['engine']:>9s} "
+                f"{row['thrust_kN']:10.2f} {row['drag_kN']:10.2f} "
+                f"{row['required_thrust_0p15g_kN']:10.2f} "
+                f"{row['net_vs_0p15g_req_kN']:12.2f} {row['alpha_deg']:11.3f}"
+            )
+
+    return objective
+
+def optimize_mission_profile(
+    maxiter: int = 30,
+    popsize: int = 8,
+    seed: int = 3,
+):
+    """
+    Run a global optimization of the mission altitude schedule and turbojet m0_DP.
+
+    CPR_DP and Tt4_DP are fixed at the baseline turbojet values. The ramjet is
+    also kept fixed because the current problem is turbojet thrust deficit.
+    Increase maxiter/popsize for a more thorough design search.
+    """
+    bounds = [
+        (9.0, 12.0),       # h_start_km, used from M=1.2 to M=2.2
+        (15.0, 20.0),      # h_M3_km
+        (26.0, 31.5),      # h_M5_km
+        (150.0, 650.0),    # turbojet design mdot per engine, m0_DP [kg/s]
+    ]
+
+    result = differential_evolution(
+        mission_optimization_objective,
+        bounds=bounds,
+        tol=0.03,
+        polish=True,
+        updating="immediate",
+        workers=1,
+        maxiter=maxiter,
+        popsize=popsize,
+        seed=seed,
+    )
+
+    print("\nBest optimized mission profile:")
+    mission_optimization_objective(result.x, verbose=True)
+    return result
+
+def plot_optimized_mission_profile(
+    opt_result,
+    save_path: str | None = "mission_profile_optimized_thrust_drag_vs_mach.png",
+    csv_path: str | None = "mission_profile_optimized_thrust_drag_results.csv",
+    suppress_output: bool = True,
+) -> dict[str, np.ndarray]:
+    """
+    Plot the optimized profile using the best design returned by optimize_mission_profile().
+    """
+    h_start_km, h_M3_km, h_M5_km, turbo_m0_DP = map(float, opt_result.x)
+    turbo_params = make_turbo_params(
+        m0_DP=turbo_m0_DP,
+        CPR_DP=_TP.CPR_DP,
+        Tt4_DP=_TP.Tt4_DP,
+    )
+    mdot_design = 200.0
+    phi = 0.5
+
+    # Temporarily override the simple schedule by evaluating the parametric one locally.
+    mach_turbo = np.linspace(1.2, 3.0, 70)
+    mach_ramjet = np.linspace(3.0, 5.0, 9)
+
+    old_schedule = mission_altitude_from_mach
+
+    def optimized_schedule(M: float) -> float:
+        return mission_altitude_from_mach_param(
+            M=M,
+            h_start_m=h_start_km * 1000.0,
+            h_m3_m=h_M3_km * 1000.0,
+            h_end_m=h_M5_km * 1000.0,
+        )
+
+    globals()["mission_altitude_from_mach"] = optimized_schedule
+    try:
+        return plot_mission_profile_thrust_drag_vs_mach(
+            mach_turbo=mach_turbo,
+            mach_ramjet=mach_ramjet,
+            ramjet_mdot_design=mdot_design,
+            ramjet_phi=phi,
+            n_ramjet_engines=2,
+            S_ref=MISSION_S_PLAN_M2,
+            save_path=save_path,
+            csv_path=csv_path,
+            suppress_output=suppress_output,
+            turbo_params=turbo_params,
+        )
+    finally:
+        globals()["mission_altitude_from_mach"] = old_schedule
+
+
+def plot_mission_profile_thrust_drag_vs_mach(
+    mach_turbo: np.ndarray | None = None,
+    mach_ramjet: np.ndarray | None = None,
+    ramjet_mdot_design: float = 200.0,
+    ramjet_phi: float = 0.5,
+    n_ramjet_engines: int = 2,
+    S_ref: float = MISSION_S_PLAN_M2,
+    save_path: str | None = "mission_profile_thrust_drag_vs_mach.png",
+    csv_path: str | None = "mission_profile_thrust_drag_results.csv",
+    suppress_output: bool = True,
+    turbo_params: _TurboParams | None = None,
+) -> dict[str, np.ndarray]:
+    """
+    Plot thrust and drag against Mach number for the requested mission segment.
+
+    Turbojet:
+        M = 1.2 -> 2.2 at h = 10 km, then M = 2.2 -> 3.0 climbing to 17 km.
+
+    Ramjet:
+        M = 3.0 -> 5.0 while climbing h = 17 -> 30 km.
+
+    Note:
+        Ramjet model points are expensive because they run the full CEA/Shapiro
+        cycle. By default, this function uses a modest number of ramjet points.
+    """
+    if mach_turbo is None:
+        mach_turbo = np.linspace(1.2, 3.0, 60)
+    if mach_ramjet is None:
+        mach_ramjet = np.linspace(3.0, 5.0, 9)
+
+    mach_turbo = np.asarray(mach_turbo, dtype=float)
+    mach_ramjet = np.asarray(mach_ramjet, dtype=float)
+
+    # Turbojet segment: horizontal at 17 km.
+    alt_turbo_m = np.array([mission_altitude_from_mach(M) for M in mach_turbo])
+    turbo_thrust_one_engine_kN = np.array([
+        turbo_thrust_curve_vs_mach(
+            altitude_m=float(h),
+            mach_values=np.array([float(M)]),
+            clamp_negative_thrust=True,
+            turbo_params=turbo_params,
+        )[0]
+        for M, h in zip(mach_turbo, alt_turbo_m)
+    ])
+    turbo_thrust_kN = N_TURBOJET_ENGINES * turbo_thrust_one_engine_kN
+
+    turbo_drag = [mission_drag_breakdown(M=float(M), altitude_m=float(h), S_ref=S_ref)
+                  for M, h in zip(mach_turbo, alt_turbo_m)]
+    turbo_drag_kN = np.array([b["D_kN"] for b in turbo_drag])
+    turbo_required_015g_kN = turbo_drag_kN + MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
+
+    # Ramjet segment: climb from 17 to 30 km.
+    alt_ramjet_m = np.array([mission_altitude_from_mach(M) for M in mach_ramjet])
+
+    ramjet_thrust_kN = []
+    ramjet_one_engine_kN = []
+    ramjet_mdot_actual = []
+    ramjet_status = []
+    print()
+    print("Mission ramjet points")
+    print("---------------------")
+    print(f"Ramjet design mdot per engine: {ramjet_mdot_design:.1f} kg/s")
+    print(f"Ramjet engines included: {n_ramjet_engines}")
+    print(f"{'Mach':>7s} {'h [km]':>8s} {'one eng [kN]':>14s} {'total [kN]':>12s} {'mdot actual':>13s} {'status':>10s}")
+
+    for M, h in zip(mach_ramjet, alt_ramjet_m):
+        out = run_ramjet_single_point(
+            h_km=float(h / 1000.0),
+            Ma0=float(M),
+            mdot=ramjet_mdot_design,
+            phi=ramjet_phi,
+            suppress_output=suppress_output,
+        )
+        if out.get("success", False):
+            one = float(out["Thrust_kN"])
+            total = n_ramjet_engines * one
+            mdot_actual = float(out.get("mdot_air_actual_kg_s", out.get("mdot_air_kg_s", np.nan)))
+            status = "OK"
+        else:
+            one = np.nan
+            total = np.nan
+            mdot_actual = np.nan
+            status = "FAILED"
+        ramjet_one_engine_kN.append(one)
+        ramjet_thrust_kN.append(total)
+        ramjet_mdot_actual.append(mdot_actual)
+        ramjet_status.append(status)
+        print(f"{M:7.2f} {h/1000.0:8.2f} {one:14.3f} {total:12.3f} {mdot_actual:13.3f} {status:>10s}")
+        if status != "OK":
+            print("   error:", out.get("error", ""))
+
+    ramjet_thrust_kN = np.array(ramjet_thrust_kN, dtype=float)
+    ramjet_one_engine_kN = np.array(ramjet_one_engine_kN, dtype=float)
+    ramjet_mdot_actual = np.array(ramjet_mdot_actual, dtype=float)
+
+    ramjet_drag = [mission_drag_breakdown(M=float(M), altitude_m=float(h), S_ref=S_ref)
+                   for M, h in zip(mach_ramjet, alt_ramjet_m)]
+    ramjet_drag_kN = np.array([b["D_kN"] for b in ramjet_drag])
+    ramjet_required_015g_kN = ramjet_drag_kN + MISSION_W_TOG_KG * MISSION_ACCEL_G * 9.81 / 1000.0
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 7.5))
+
+    ax.plot(mach_turbo, turbo_thrust_kN, linewidth=2.5, label=f"Turbojet thrust, {N_TURBOJET_ENGINES} engines")
+    ax.plot(mach_turbo, turbo_drag_kN, linestyle="--", linewidth=2.5,
+            label="Drag, M=1.2–3 supersonic model")
+    ax.plot(mach_turbo, turbo_required_015g_kN, linestyle=":", linewidth=2.0,
+            label="Drag + 0.15g accel requirement")
+
+    ax.plot(mach_ramjet, ramjet_thrust_kN, marker="s", linewidth=2.5,
+            label=f"Ramjet thrust, {n_ramjet_engines} engines")
+    ax.plot(mach_ramjet, ramjet_drag_kN, marker="^", linestyle="--", linewidth=2.5,
+            label="Drag, M=3–5 attached high-speed model")
+    ax.plot(mach_ramjet, ramjet_required_015g_kN, marker=".", linestyle=":", linewidth=2.0,
+            label="Drag + 0.15g accel requirement, ramjet climb")
+
+    ax.axvline(3.0, color="black", linestyle="-.", linewidth=1.6, label="Ramjet takeover M=3")
+    ax.axvline(5.0, color="black", linestyle=":", linewidth=1.6, label="Ramjet cruise/check point M=5")
+
+    # Secondary axis for altitude profile.
+    ax2 = ax.twinx()
+    all_mach_alt = np.concatenate([mach_turbo, mach_ramjet])
+    all_alt = np.concatenate([alt_turbo_m, alt_ramjet_m]) / 1000.0
+    ax2.plot(all_mach_alt, all_alt, color="gray", alpha=0.45, linewidth=1.8,
+             label="Mission altitude")
+    ax2.set_ylabel("Altitude [km]")
+    ax2.set_ylim(8, 32)
+
+    ax.set_xlabel("Mach number [-]")
+    ax.set_ylabel("Force [kN]")
+    ax.set_title(
+        "Mission profile: thrust and drag vs Mach\n"
+        "Turbojet: M=1.2→2.2 at h=10 km, then climb to 17 km by M=3 | Ramjet: M=3→5 climb to 30 km"
+    )
+    ax.grid(True, alpha=0.35)
+
+    # Combine legends.
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8.5, loc="best")
+
+    fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.show()
+
+    # Save a clean CSV.
+    rows = []
+    for M, h, T, D, Req, b in zip(mach_turbo, alt_turbo_m, turbo_thrust_kN, turbo_drag_kN, turbo_required_015g_kN, turbo_drag):
+        rows.append({
+            "segment": "turbojet_accel_climb",
+            "Mach": float(M),
+            "altitude_m": float(h),
+            "altitude_km": float(h/1000.0),
+            "thrust_kN": float(T),
+            "drag_kN": float(D),
+            "required_thrust_0p15g_kN": float(Req),
+            "net_vs_drag_kN": float(T - D),
+            "net_vs_0p15g_req_kN": float(T - Req),
+            "alpha_deg": float(b.get("alpha_deg", np.nan)),
+            "CL": float(b.get("CL", np.nan)),
+            "drag_model": b.get("model", ""),
+            "ramjet_mdot_actual_kg_s_per_engine": np.nan,
+        })
+    for M, h, T, D, Req, b, mdot_actual in zip(mach_ramjet, alt_ramjet_m, ramjet_thrust_kN, ramjet_drag_kN, ramjet_required_015g_kN, ramjet_drag, ramjet_mdot_actual):
+        rows.append({
+            "segment": "ramjet_climb",
+            "Mach": float(M),
+            "altitude_m": float(h),
+            "altitude_km": float(h/1000.0),
+            "thrust_kN": float(T),
+            "drag_kN": float(D),
+            "required_thrust_0p15g_kN": float(Req),
+            "net_vs_drag_kN": float(T - D),
+            "net_vs_0p15g_req_kN": float(T - Req),
+            "alpha_deg": float(b.get("alpha_deg", np.nan)),
+            "CL": float(b.get("CL", np.nan)),
+            "drag_model": b.get("model", ""),
+            "ramjet_mdot_actual_kg_s_per_engine": float(mdot_actual),
+        })
+
+    try:
+        import pandas as pd
+        df = pd.DataFrame(rows)
+        if csv_path:
+            df.to_csv(csv_path, index=False)
+    except Exception:
+        df = None
+
+    return {
+        "mach_turbo": mach_turbo,
+        "altitude_turbo_m": alt_turbo_m,
+        "turbo_thrust_kN": turbo_thrust_kN,
+        "turbo_drag_kN": turbo_drag_kN,
+        "turbo_required_0p15g_kN": turbo_required_015g_kN,
+        "mach_ramjet": mach_ramjet,
+        "altitude_ramjet_m": alt_ramjet_m,
+        "ramjet_thrust_kN": ramjet_thrust_kN,
+        "ramjet_drag_kN": ramjet_drag_kN,
+        "ramjet_required_0p15g_kN": ramjet_required_015g_kN,
+        "ramjet_mdot_actual_kg_s_per_engine": ramjet_mdot_actual,
+    }
+
+
+if __name__ == "__main__":
+    # ---------------------------------------------------------------------
+    # IMPORTANT:
+    # Set RUN_OPTIMIZATION = True to actually optimize the trajectory.
+    # The previous version only plotted the fixed baseline values, so it
+    # looked unchanged even though optimizer functions existed above.
+    # ---------------------------------------------------------------------
+    RUN_OPTIMIZATION = True
+
+    if RUN_OPTIMIZATION:
+        print("\nRunning mission-profile optimization from Mach 1.2 to Mach 5.0...")
+        print("Optimizer variables: h_start, h_at_M3, h_at_M5, turbo_m0_DP")
+        print("CPR and Tt4 are fixed at baseline turbojet values; ramjet settings are fixed at mdot=200 kg/s per engine and phi=0.5.")
+
+        opt_result = optimize_mission_profile(
+            maxiter=20,   # increase to 40-80 for a more thorough final run
+            popsize=6,    # increase to 8-12 for a more thorough final run
+            seed=3,
+        )
+
+        results_mission = plot_optimized_mission_profile(
+            opt_result,
+            save_path="mission_profile_OPTIMIZED_thrust_drag_vs_mach.png",
+            csv_path="mission_profile_OPTIMIZED_thrust_drag_results.csv",
+            suppress_output=True,
+        )
+
+        print("\nOptimization complete.")
+        print("Saved optimized plot: mission_profile_OPTIMIZED_thrust_drag_vs_mach.png")
+        print("Saved optimized CSV : mission_profile_OPTIMIZED_thrust_drag_results.csv")
+
+    else:
+        print("\nRunning fixed baseline mission profile, no optimization.")
+        results_mission = plot_mission_profile_thrust_drag_vs_mach(
+            mach_turbo=np.linspace(1.2, 3.0, 70),
+            mach_ramjet=np.linspace(3.0, 5.0, 9),
+            ramjet_mdot_design=200.0,
+            ramjet_phi=0.5,
+            n_ramjet_engines=2,
+            S_ref=MISSION_S_PLAN_M2,
+            save_path="mission_profile_baseline_thrust_drag_vs_mach.png",
+            csv_path="mission_profile_baseline_thrust_drag_results.csv",
+            suppress_output=True,
+        )
