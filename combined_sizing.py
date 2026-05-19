@@ -630,7 +630,23 @@ def segment_weight_fraction(segment: MissionSegment, W_current: float, S_plan: f
         else:
             a_x_allow = math.sqrt(a_total_max**2 - a_y**2)
 
-        T_accel_limited = D_used + W_current * a_x_allow
+        # Imported transition-profile segments already include the acceleration
+        # requirement in thrust_req_override_N:
+        #     T_req = D + W_ref * 0.15 g
+        # Use that imported requirement as the thrust cap for fuel burn, instead
+        # of applying a new D + W_current * max_total_accel_g cap here.
+        # This prevents accidentally using 0.30 g thrust in the combined sizing
+        # after the mission optimizer already sized for 0.15 g.
+        if (
+            USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED
+            and segment.thrust_req_override_N is not None
+            and segment.thrust_req_override_N > D_used
+        ):
+            T_accel_limited = float(segment.thrust_req_override_N)
+            a_x_allow = max(0.0, (T_accel_limited - D_used) / W_current)
+        else:
+            T_accel_limited = D_used + W_current * a_x_allow
+
         T_used = min(T_available, T_accel_limited)
 
         if T_available <= D_used:
@@ -1650,7 +1666,11 @@ def build_segments_from_updated_mission_profile(
 
 OPTIMIZED_PROFILE_FILE = "optimize_transition_profile.py"
 USE_IMPORTED_OPTIMIZED_PROFILE = True
-MISSION_IMPORTED_THRUST_MARGIN = 1.02
+MISSION_IMPORTED_THRUST_MARGIN = 1.00
+# If True, imported profile segments use the optimizer's own thrust requirement
+# T_req = D + 0.15g term, rather than recomputing a new acceleration cap in
+# the combined sizing loop. This avoids double-counting acceleration.
+USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED = True
 MISSION_OPTIMIZER_SUPPRESS_OUTPUT = False
 
 
@@ -1848,7 +1868,7 @@ def build_segments_from_imported_optimized_profile(
             altitude_drag=h_mid,
             flight_path_angle_deg=gamma_seg,
             T=T_available_N,
-            max_total_accel_g=0.30,
+            max_total_accel_g=getattr(module, "ACCEL_G_TARGET", 0.15),
             drag_override_N=D_override_N,
             thrust_req_override_N=T_req_override_N,
             q_override_Pa=q_override,
@@ -1943,6 +1963,8 @@ def build_segments_from_imported_optimized_profile(
         "turbo_design_kN_per_engine": sizing.turbo_design_lbf_per_engine * 0.0044482216152605,
         "ramjet_design_mdot_kg_s_total": sizing.ramjet_design_mdot_kg_s,
         "ramjet_design_mdot_kg_s_per_engine": sizing.ramjet_design_mdot_kg_s / max(1, getattr(module, "N_RAMJETS", 1)),
+        "use_imported_thrust_requirement_for_T_used": USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED,
+        "mission_imported_thrust_margin": MISSION_IMPORTED_THRUST_MARGIN,
         "turbo_scale": sizing.max_turbo_scale,
         "ramjet_scale": sizing.max_ramjet_scale,
         "mission_optimizer_objective": sizing.objective,
@@ -2034,7 +2056,7 @@ if __name__ == "__main__":
         rho_payload=100.0,
         segments=segments,
         k_rf=0.06,
-        W_to_guess=74_680.0,
+        W_to_guess=74_860.0,
         rho_str=2700.0,
         rho_tps=2500.0,
         rho_tank_str=2700.0,
