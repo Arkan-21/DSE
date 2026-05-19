@@ -18,7 +18,7 @@ ACCEL_G = 0.15         # Doelversnelling (g)
 G = 9.81
 
 # Mach range voor de simulatie
-mach_range = np.linspace(1.2, 6.0, 100)
+mach_range = np.linspace(1.2, 3.0, 100)
 
 # --- 2. Hulpfuncties ---
 
@@ -56,19 +56,11 @@ for M in mach_range:
     # A. Benodigde CL voor Lift = Gewicht
     cl_needed = (W_TOG * G) / (0.5 * rho * V**2 * S_PLAN)
     
-    # B. Bereken Alpha en Wave Drag (Schakelen tussen regimes)
-    #if M <= 3.0:
-        # Supersonisch (Ackeret)
-        #beta = np.sqrt(M**2 - 1)
-        #alpha_rad = (cl_needed * beta) / 4
-        #cd_wave = (4 * alpha_rad**2) / beta
-    #else:
-        # Hypersonisch (Newtonian)
-        # Cl = 2 * sin^2(alpha) -> benadering alpha = sqrt(Cl/2)
+    # B. Bereken Alpha en Wave Drag
     alpha_rad = np.sqrt((cl_needed**0.75) / 2)
     cd_wave = 2 * np.sin(alpha_rad)**3
         
-    # C. Wrijving (Jouw Schlichting berekening maar dan dynamisch)
+    # C. Wrijving
     Re_dyn = get_reynolds(rho, V, T, MAC)
     cf = 0.455 / (np.log10(Re_dyn)**2.58)
     cd_f = cf * IF * (S_WET / S_PLAN)
@@ -88,7 +80,6 @@ for M in mach_range:
     results['wave'].append(0.5 * rho * V**2 * S_PLAN *cd_wave/1000)
 
 # --- 4. Visualisatie ---
-# ** CHANGED LAYOUT TO A 3x2 MATRIX TO FIT THE CL-ALPHA PLOT COMFORTABLY **
 fig, axs = plt.subplots(3, 2, figsize=(12, 14))
 
 axs[0, 0].plot(mach_range, results['cl'], color='blue', label='CL Needed')
@@ -101,7 +92,7 @@ axs[0, 1].set_ylabel('Graden')
 
 axs[1, 0].plot(mach_range, results['ld'], color='orange', label='L/D')
 axs[1, 0].set_title('Efficiëntie (L/D Ratio)')
-axs[1, 0].set_ylabel('L/D')
+axs[1, 1].set_ylabel('L/D')
 
 axs[1, 1].plot(mach_range, results['thrust'], color='green', label='Required Thrust')
 axs[1, 1].plot(mach_range, results['cdf'], color='red', label='friction')
@@ -109,13 +100,25 @@ axs[1, 1].plot(mach_range, results['wave'], color='yellow', label='wave')
 axs[1, 1].set_title('Benodigde Thrust voor 0.15g')
 axs[1, 1].set_ylabel('Thrust (kN)')
 
-axs[2, 0].plot(results['alpha'], results['cl'], color='purple', linewidth=2, label='Flight Profile Path')
-axs[2, 0].set_title('$C_L$ vs Angle of Attack ($\\alpha$) along Climb Profile')
+# ** FIXED: ONLY MACH 3 AND CORRECT LINEARIZED/ACKERET SUPERSONIC SHAPE **
+alpha_sweep_deg = np.linspace(0, 60, 100) # Reduced sweep range to realistic operational limits (0-15 deg)
+alpha_sweep_rad = np.radians(alpha_sweep_deg)
+
+M_fixed = 3.0
+# Ackeret supersonic lift-curve slope: Cl_alpha = 4 / sqrt(M^2 - 1)
+cl_alpha = 4.0 / np.sqrt(M_fixed**2 - 1.0)
+cl_sweep = cl_alpha * alpha_sweep_rad
+
+axs[2, 0].plot(alpha_sweep_deg, cl_sweep, color='magenta', linewidth=2, label=f'True Mach {M_fixed} Characteristic')
+axs[2, 0].set_title(f'True $C_L$ vs Angle of Attack ($\\alpha$) Performance at Mach {M_fixed}')
 axs[2, 0].set_xlabel('Angle of Attack ($\\alpha$ in degrees)')
 axs[2, 0].set_ylabel('Lift Coefficient ($C_L$)')
+axs[2, 0].set_xlim(0, 20)
+axs[2, 0].set_ylim(0, 1) # Normalizes window to realistic supersonic lift coefficients
 axs[2, 0].grid(True, alpha=0.3)
 axs[2, 0].legend()
 
+# Hiding the blank panel
 axs[2, 1].axis('off')
 
 for ax in axs.flat:

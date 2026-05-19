@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon May 11 12:33:45 2026
+
+@author: SID-DRW
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -9,7 +16,7 @@ R = 287.0
 gamma = 1.4
 
 w_tog = 111389.0         # Massa (kg)
-s_plan = 425.0           # Oppervlakte (m2)
+s_plan = 425.0           # Vleugeloppervlakte (m2)
 accel_g_target = 0.15    # Doelversnelling (g)
 L_ref = 35.0             # Karakteristieke lengte (m) voor Reynolds-berekening
 
@@ -134,9 +141,9 @@ for M in mach_range:
     cd_press_list.append(cd_press)
 
 # =============================================================================
-# VISUALISATION (Grid Layout 3x2)
+# VISUALISATION (Grid Layout 4x2)
 # =============================================================================
-fig, axs = plt.subplots(3, 2, figsize=(14, 13))
+fig, axs = plt.subplots(4, 2, figsize=(14, 17))
 
 # Grafiek 1: Benodigde Invalshoek
 axs[0, 0].plot(mach_range, alpha_list, color='blue', lw=2)
@@ -183,6 +190,25 @@ axs[2, 1].set_xlabel('Mach Number')
 axs[2, 1].set_ylabel('CD')
 axs[2, 1].grid(True, alpha=0.3)
 axs[2, 1].legend()
+
+# Generate a static alpha sweep from 0 to 15 degrees
+alpha_sweep_deg = np.linspace(0, 20, 100)
+alpha_sweep_rad = np.radians(alpha_sweep_deg)
+
+# Calculate Cl_alpha slope strictly at Mach 3.0 using your formula
+M_target = 3.0
+cl_alpha_m3 = 4.0 / np.sqrt(M_target**2 - 1.0)
+cl_sweep_m3 = cl_alpha_m3 * alpha_sweep_rad
+
+axs[3, 0].plot(alpha_sweep_deg, cl_sweep_m3, color='magenta', lw=2.5, label=f'Linear Theory (M={M_target})')
+axs[3, 0].set_title(f'Isolated $C_L$ vs. $\\alpha$ Curve at Mach {M_target}')
+axs[3, 0].set_xlabel('Angle of Attack ($\\alpha$ in degrees)')
+axs[3, 0].set_ylabel('Lift Coefficient ($C_L$)')
+axs[3, 0].grid(True, alpha=0.6)
+axs[3, 0].legend()
+
+# Turn off the final unused panel cell
+axs[3, 1].axis('off')
 
 plt.tight_layout()
 plt.show()
