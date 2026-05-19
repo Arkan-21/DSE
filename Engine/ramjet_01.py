@@ -672,7 +672,7 @@ class Ramjet:
     alpha12 = 0.85   # slight expansion: sec 1 → 2
     alpha13 = 0.75   # continued diffusion to combustor inlet (sec 1 → 3)
     alpha14 = 1.0371   # slight taper of combustor (sec 1 → 4 reference)
-    alpha05 = 3.50   # nozzle exit / A0  (large: supersonic exit)
+    alpha05 = 2   # nozzle exit / A0  (large: supersonic exit)
  
     # ── Aerothermodynamic parameters ──────────────────────────────────────
     Ma_COMB    = 0.30   # target Mach at combustor inlet (subsonic, replaces EPSILON*Ma0)
@@ -1264,7 +1264,7 @@ class Ramjet:
         Fin = mdot5*V5 + p5*A5 - mdot_air*V0 - p0*A0
         Isp = Fin / ((mfuel+mdot_air)) * 9.80665
         Ia  = Fin / mdot_air
-        return {"Fin": Fin, "Isp": Isp, "Ia": Ia, "mfuel": mfuel, "thermal_choke": False}
+        return {"Fin": Fin, "Isp": Isp, "Ia": Ia, "mfuel": mfuel, "A0": A0, "A5": A5, "thermal_choke": False}
 
     # =====================================================================
     # Plot
@@ -1415,9 +1415,9 @@ def print_section(title, props, fields):
 if __name__ == "__main__":
     eng = Ramjet()
 
-    h_km = 20.0
+    h_km = 25.0
     Ma0  = 3.0
-    mdot = 100.0
+    mdot = 150.0
     phi  = 0.5
 
     print(f"\n{'═'*65}")
@@ -1559,6 +1559,8 @@ if __name__ == "__main__":
         ("Internal thrust Fin",    "Fin", "N",      1.0),
         ("Specific impulse Isp",  "Isp", "s",      1.0),
         ("Specific thrust Ia",     "Ia",  "N·s/kg", 1.0),
+        ("Inlet arrea A₀",            "A0",  "m²",     1.0),
+        ("Exit area A₅",             "A5",  "m²",     1.0),
     ])
 
     print(f"\n  Fuel: H₂,  φ={phi},  FAR={sec3['mfuel']/mdot:.5f}")
