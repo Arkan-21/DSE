@@ -35,7 +35,7 @@ M_TO_FT = 3.280839895
 # Original pyCycle example design thrust was 11,800 lbf.
 # We scale the engine to 90,000 lbf per engine.
 BASE_DESIGN_THRUST_LBF = 11_800.0
-DESIGN_THRUST_LBF = 600_000.0
+DESIGN_THRUST_LBF = 150_000.0
 
 SCALE = DESIGN_THRUST_LBF / BASE_DESIGN_THRUST_LBF
 
