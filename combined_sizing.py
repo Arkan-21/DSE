@@ -365,11 +365,11 @@ def k_w_from_tau(tau: float, configuration: str = "wing_body") -> float:
         raise ValueError("tau must be positive.")
 
     if configuration == "waverider":
-        return 5632.2 * tau**4 - 3106.0 * tau**3 + 621.37 * tau**2 - 46.623 * tau + 3.8167
+        return 1053.3 * tau**4- 863.55* tau**3 + 243.06* tau**2 - 22.026 * tau + 3.3655
     elif configuration == "wing_body":
-        return 473.07 * tau**4 - 366.2 * tau**3 + 110.36 * tau**2 - 9.6647 * tau + 2.9019
+        return 1604.6 * tau**4 - 936.96 * tau**3 + 203.15 * tau**2 - 15.014* tau + 2.9932
     elif configuration == "blended_body":
-        return 18.594 * tau**2 + 0.0084 * tau + 2.4274
+        return -326 * tau**4 + 189.99* tau**3 -22.369* tau**2 + 3.7082* tau+ 2.3081
     else:
         raise ValueError("configuration must be 'waverider', 'wing_body', or 'blended_body'.")
 
@@ -1664,7 +1664,7 @@ if __name__ == "__main__":
         I_tps=6.0,
         KIT=1.0,
         I_tank=4.0,
-        rho_LH2=70.0,
+        rho_LH2=70.0,   
         rho_JetA=800.0,
         k_pf=1.0,
         I_sub=0.04,
