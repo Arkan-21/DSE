@@ -1311,6 +1311,9 @@ class Ramjet:
         s_s, st_s = cat("s"), cat("st")
         A_arr  = cat("A")
 
+        self.Temperature_Distribution = T
+        self.geometry = A_arr
+
         fig, axs = plt.subplots(7, 1, figsize=(12, 26), sharex=True)
 
         # --- 1. Mach ----------------------------------------------------
@@ -1382,17 +1385,17 @@ class Ramjet:
 # ---------------------------------------------------------------------------
 # Run One Case
 # ---------------------------------------------------------------------------
-def altitude_mach(self, h_km, Ma0):
-    """Helper to run a single case and print results."""
-    eng = Ramjet()
-    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
-    iso  = eng.isolator_properties(inp)
-    sec2 = eng.combustor_properties2(iso)
-    sec3 = eng.combustor_properties3(sec2, phi=0.5)
-    sec4 = eng.combustor_properties4(sec3)
-    sec5 = eng.nozzle_properties(sec4, inp)
-    perf = eng.performance(inp, sec5, sec3)
-    return perf
+    def altitude_mach(self, h_km, Ma0):
+        """Helper to run a single case and print results."""
+        eng = Ramjet()
+        inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
+        iso  = eng.isolator_properties(inp)
+        sec2 = eng.combustor_properties2(iso)
+        sec3 = eng.combustor_properties3(sec2, phi=0.5)
+        sec4 = eng.combustor_properties4(sec3)
+        sec5 = eng.nozzle_properties(sec4, inp)
+        perf = eng.performance(inp, sec5, sec3)
+        return perf
 
 
 # ---------------------------------------------------------------------------
