@@ -1412,7 +1412,7 @@ def find_feasible_descent_acceleration(
 ENGINE_TRANSITION_MACH = {"T2R": 2.5, "R2S": 5.0}
 
 ISP_BY_PROPULSION = {
-    "turbojet": 2100.0,   # Jet-A
+    "turbojet": 3500.0,   # Jet-A
     "ramjet": 3500.0,     # LH2
     "scramjet": 1500.0,   # LH2
 }
@@ -2047,7 +2047,7 @@ if __name__ == "__main__":
         KIT=1.0,
         I_tank=4.0,
         rho_LH2=70.0,
-        rho_JetA=800.0,
+        rho_JetA=70.0,
         k_pf=1.0,
         I_sub=0.04,
         W_prop=17_053.50436,
