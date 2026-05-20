@@ -81,7 +81,9 @@ class TankStructure:
         """
         V_cyl  = np.pi * self.r**2 * self.L_cyl
         V_caps = 2.0 * (np.pi * self.r**3 / 3.0)
-        return V_cyl + V_caps
+        self._V_total = V_cyl + V_caps
+        return self._V_total
+
 
     # --------------------------------------------------------
     # STRUCTURAL SIZING  (CS-25 approach, Parello et al. [17])
@@ -769,7 +771,4 @@ if __name__ == "__main__":
         fontsize=12
     )
     plt.tight_layout()
-    #plt.savefig("/mnt/user-data/outputs/tank_simulation.png",
-                #dpi=150, bbox_inches="tight")
     plt.show()
-    #print("\nPlot saved to tank_simulation.png")

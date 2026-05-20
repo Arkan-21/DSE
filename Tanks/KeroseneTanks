@@ -1,0 +1,71 @@
+import numpy as np
+from CryogenicTanks import TankStructure
+
+class KeroseneTank(TankStructure):
+
+    kerosene_mass = 25000 #kg
+    kerosene_density = 810 #kg/m^3
+    kerosene_volume = kerosene_mass / kerosene_density #m^3
+
+    def __init__(self, d, L_cyl, delta_P_max, delta_P_operational, ins_thickness, rho_ins, k_ins):
+        self.d = d
+        self.L_cyl = L_cyl
+        self.delta_P_max = delta_P_max
+        self.delta_P_operational = delta_P_operational
+        self.ins_thickness = ins_thickness
+        self.rho_ins = rho_ins
+        self.k_ins = k_ins
+
+        self.structure = TankStructure(
+        diameter           = self.d,
+        cylindrical_length = self.L_cyl,
+        delta_P_max        = delta_P_max,
+        delta_P_operational= delta_P_operational,
+        ins_thickness      = ins_thickness,
+        rho_ins            = rho_ins,
+        k_ins              = k_ins,
+        )
+        
+    def tank_mass_options(self):
+        possibele_diameters = np.arange(0.1, 3.5, 0.1) #m
+        possibele_lengths = np.arange(0.1, 25, 0.1) #m
+
+        min_mass = np.inf
+        best_d = 0
+        best_L = 0
+        nr_tanks = 0
+
+        for d in possibele_diameters:
+            for L in possibele_lengths:
+                self.structure = TankStructure(
+                    diameter           = d,
+                    cylindrical_length = L,
+                    delta_P_max        = 10e5,
+                    delta_P_operational= 10e5,
+                    ins_thickness      = 0,
+                    rho_ins            = self.rho_ins,
+                    k_ins              = self.k_ins,
+                )
+                V =self.structure.V_total
+                numbe_of_tanks = np.ceil(self.kerosene_volume / self.structure.V_total)
+                m_tank = self.structure.m_tank*numbe_of_tanks
+                if m_tank < min_mass:
+                    min_mass = m_tank
+                    best_d = d
+                    best_L = L
+                    nr_tanks = numbe_of_tanks
+                #print(f"Diameter: {d} m, Length: {L} m, Total Mass of Kerosene Tanks: {m_tank} kg, Number of Tanks: {numbe_of_tanks}, Total Volume: {V*numbe_of_tanks} m^3")
+        print(f"Optimal Diameter: {best_d} m, Optimal Length: {best_L} m, Minimum Total Mass of Kerosene Tanks: {min_mass} kg, Number of Tanks: {nr_tanks}, Total Volume: {self.structure.V_total*nr_tanks} m^3")
+
+if __name__ == "__main__":
+    kerosene_tank = KeroseneTank(
+        d = 2.5, 
+        L_cyl = 10, 
+        delta_P_max = 10e5, 
+        delta_P_operational = 10e5, 
+        ins_thickness = 0.05, 
+        rho_ins = 300, 
+        k_ins = 0.03
+    )
+    
+    kerosene_tank.tank_mass_options()
