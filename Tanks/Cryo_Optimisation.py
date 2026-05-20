@@ -554,7 +554,7 @@ def simulate_mission(
     eps  = 1e-6
 
     m_per_tank = mc.m_h2_total / n_tanks
-    m_dot_f    = m_per_tank / mc.mission_time   # constant draw [kg/s]
+    m_dot_f    = 4.2   # constant draw [kg/s]
 
     try:
         tank = TankThermodynamics(
@@ -873,8 +873,8 @@ def main() -> None:
     args = parse_args()
 
     mc = MissionConfig(
-        m_h2_total   = args.m,
-        mission_time = args.t * 3600.0,
+        m_h2_total   = 40718.431,
+        mission_time = 3 * 3600.0,
     )
     oc = OptimConfig(
         n_tanks_range = range(1, args.nmax + 1),
