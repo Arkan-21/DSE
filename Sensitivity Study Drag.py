@@ -28,7 +28,7 @@ AR = 7.0
 mach_range = np.linspace(0.7, 6.0, 300)
 
 # =============================================================================
-# 2. ATMOSPHERE ENGINE (ISA MODEL)
+# 2. ATMOSPHERE (ISA MODEL)
 # =============================================================================
 def get_atmosphere(alt_m):
     g0 = 9.80665
@@ -69,7 +69,7 @@ def get_reynolds(rho, v, temp, chord):
     return (rho * v * chord) / mu
 
 # =============================================================================
-# 3. CONTINUOUS ISO-ATMOSPHERIC PERFORMANCE LOOP WITH VERBAL LOGGER
+# 3. CONTINUOUS ISO-ATMOSPHERIC PERFORMANCE LOOP
 # =============================================================================
 results = {
     'mach': [], 'q': [], 'cl': [], 'alpha': [], 'cd': [], 
@@ -144,7 +144,7 @@ for idx, M in enumerate(mach_range):
     # --- PURE NEWTONIAN IMPACT REGIME FOR ALL UPPER MACH NUMBERS (M >= 1.2) ---
     else:
         if M < 3.0:
-            regime_str = "Supersonic"  # Keeping the label name for continuity
+            regime_str = "Supersonic"  
         else:
             regime_str = "Hypersonic"
             
@@ -195,7 +195,7 @@ for key in results:
         results[key] = np.array(results[key])
 
 # =============================================================================
-# 4. CSV AUTOMATED EXPORT ENGINE
+# 4. CSV AUTOMATED EXPORT 
 # =============================================================================
 csv_filename = "mach_fixed_altitude_output.csv"
 with open(csv_filename, mode='w', newline='') as file:
@@ -255,18 +255,18 @@ plt.tight_layout()
 plt.show()
 
 # ================================================================
-# 6. MULTI-VARIABLE AERODYNAMIC SENSITIVITY ENGINE 
+# 6. MULTI-VARIABLE AERODYNAMIC SENSITIVITY
 # ================================================================
 
 def compute_cd_parametric(M, alt_m, delta_T=0.0, weight_kg=W_TOG, s_wet_ratio=S_WET/S_PLAN):
     """
     Evaluates CD for a given Mach number and atmospheric state while allowing
-    independent scaling variations for Weight, Wetted Area,Altitude, Density and Temperature.
+    independent scaling variations for Weight, Wetted Area, Altitude, Density and Temperature.
     """
     # 1. Evaluate baseline atmosphere
     rho_base, T_base = get_atmosphere(alt_m)
     
-    # 2. Apply Temperature deviation (which implicitly alters density and pressure)
+    # 2. Apply Temperature deviation 
     T = T_base + delta_T
     P = rho_base * R_GAS * T_base 
     rho = P / (R_GAS * T)
@@ -281,7 +281,6 @@ def compute_cd_parametric(M, alt_m, delta_T=0.0, weight_kg=W_TOG, s_wet_ratio=S_
     # Required CL is direct function of weight and dynamic pressure
     cl_needed = (weight_kg * G) / (q * S_PLAN)
     
-    # 3. Original math switching matrix preserved exactly
     if M <= 1.0:
         Re_dyn = get_reynolds(rho, V, T, MAC)
         cf_inc = 0.455 / (np.log10(Re_dyn)**2.58)
@@ -316,7 +315,7 @@ def compute_cd_parametric(M, alt_m, delta_T=0.0, weight_kg=W_TOG, s_wet_ratio=S_
     else: # M >= 1.2 Newtonian Impact Regime
         Re_dyn_hyper = get_reynolds(rho, V, T, L_REF)
         cf_hyper = (0.074 / (Re_dyn_hyper**(0.2))) * ((1 / (1 + 0.15 * M**2))**0.58)
-        cd_f = cf_hyper * 2.0 # Internal constant factor 2.0 from original code
+        cd_f = cf_hyper * 2.0 
         
         alpha_rad = np.sqrt(np.abs(cl_needed**0.75) / 2)
         cd_wave = 2 * np.sin(alpha_rad)**3
@@ -336,112 +335,104 @@ density_sweep = np.logspace(np.log10(0.01), np.log10(1.2), 200)
 mach_targets = [0.8, 1.1, 1.5, 3.0, 5.0]
 density_colors = {0.8: 'teal', 1.1: 'darkorange', 1.5: 'crimson', 3.0: 'purple', 5.0: 'black'}
 
-# Initialize 3x2 panel matrix layout
-fig, axs = plt.subplots(3, 2, figsize=(16, 18))
+# Clean (1, 2) layout configures plots 1 and 2 directly side by side
+fig, axs = plt.subplots(1, 2, figsize=(16, 6))
 styles = ['--', '-', ':']
 
 # Plot 1: Altitude Sensitivity (5 to 30 km)
 for alt in altitudes_requested:
     cd_profile = [compute_cd_parametric(m, alt) for m in mach_sweep]
-    axs[0, 0].plot(mach_sweep, cd_profile, lw=2, label=f'Alt = {alt/1000:.0f} km')
-axs[0, 0].set_title('1. CD Sensitivity to Altitude (Density/Pressure Decay)')
-axs[0, 0].legend()
+    axs[0].plot(mach_sweep, cd_profile, lw=2, label=f'Alt = {alt/1000:.0f} km')
+#axs[0].set_title('1. CD Sensitivity to Altitude (Density/Pressure Decay)')
+axs[0].legend()
 
 # Plot 2: Weight Sensitivity
 for i, w_var in enumerate(weight_variants):
     cd_profile = [compute_cd_parametric(m, fixed_altitude_m, weight_kg=w_var) for m in mach_sweep]
-    axs[0, 1].plot(mach_sweep, cd_profile, lw=2, ls=styles[i], label=f'Weight: {w_var/1000:.1f} metric tons')
-axs[0, 1].set_title(f'2. CD Sensitivity to Vehicle Weight at {fixed_altitude_m/1000:.1f} km')
-axs[0, 1].legend()
+    axs[1].plot(mach_sweep, cd_profile, lw=2, ls=styles[i], label=f'Weight: {w_var/1000:.1f} metric tons')
+#axs[1].set_title(f'2. CD Sensitivity to Vehicle Weight at {fixed_altitude_m/1000:.1f} km')
+axs[1].legend()
 
-# Plot 3: Wetted Surface Area Ratio Sensitivity
-for i, r_var in enumerate(wetted_ratios):
-    cd_profile = [compute_cd_parametric(m, fixed_altitude_m, s_wet_ratio=r_var) for m in mach_sweep]
-    axs[1, 0].plot(mach_sweep, cd_profile, lw=2, ls=styles[i], label=f'Swet/Splan Ratio = {r_var:.3f}')
-axs[1, 0].set_title(r'3. CD Sensitivity to Friction Area ($S_{wet}/S_{plan}$)')
-axs[1, 0].legend()
+# # Plot 3: Wetted Surface Area Ratio Sensitivity
+# for i, r_var in enumerate(wetted_ratios):
+#     cd_profile = [compute_cd_parametric(m, fixed_altitude_m, s_wet_ratio=r_var) for m in mach_sweep]
+#     axs[1, 0].plot(mach_sweep, cd_profile, lw=2, ls=styles[i], label=f'Swet/Splan Ratio = {r_var:.3f}')
+# axs[1, 0].set_title(r'3. CD Sensitivity to Friction Area ($S_{wet}/S_{plan}$)')
+# axs[1, 0].legend()
 
-# Plot 4: Atmospheric Sensitivity (Temperature & Combined Density Shifts)
-for i, dT in enumerate(isa_deviations):
-    cd_profile = [compute_cd_parametric(m, fixed_altitude_m, delta_T=dT) for m in mach_sweep]
-    label_str = f'ISA Standard' if dT == 0 else f'ISA {dT:+.0f}°C (T/$\\rho$ Shift)'
-    axs[1, 1].plot(mach_sweep, cd_profile, lw=2, ls=styles[i], label=label_str)
-axs[1, 1].set_title(f'4. CD Sensitivity to Atmospheric Dev at {fixed_altitude_m/1000:.1f} km')
-axs[1, 1].legend()
+# # Plot 4: Atmospheric Sensitivity (Temperature & Combined Density Shifts)
+# for i, dT in enumerate(isa_deviations):
+#     cd_profile = [compute_cd_parametric(m, fixed_altitude_m, delta_T=dT) for m in mach_sweep]
+#     label_str = f'ISA Standard' if dT == 0 else f'ISA {dT:+.0f}°C (T/$\\rho$ Shift)'
+#     axs[1, 1].plot(mach_sweep, cd_profile, lw=2, ls=styles[i], label=label_str)
+# axs[1, 1].set_title(f'4. CD Sensitivity to Atmospheric Dev at {fixed_altitude_m/1000:.1f} km')
+# axs[1, 1].legend()
 
-# Plot 5: Pure Isolated Density Sweep
-_, T_ref = get_atmosphere(fixed_altitude_m)
-a_ref = np.sqrt(GAMMA * R_GAS * T_ref)
+# # Plot 5: Pure Isolated Density Sweep
+# _, T_ref = get_atmosphere(fixed_altitude_m)
+# a_ref = np.sqrt(GAMMA * R_GAS * T_ref)
 
-for m_val in mach_targets:
-    cd_vs_rho = []
-    V_val = m_val * a_ref
-    for rho_val in density_sweep:
-        if m_val <= 1.0:
-            Re_dyn = get_reynolds(rho_val, V_val, T_ref, MAC)
-            cf_inc = 0.455 / (np.log10(Re_dyn)**2.58)
-            cf_comp = cf_inc / np.sqrt(np.abs(1.0 - m_val**2))
-            cd_f = cf_comp * IF * (S_WET / S_PLAN)
+# for m_val in mach_targets:
+#     cd_vs_rho = []
+#     V_val = m_val * a_ref
+#     for rho_val in density_sweep:
+#         if m_val <= 1.0:
+#             Re_dyn = get_reynolds(rho_val, V_val, T_ref, MAC)
+#             cf_inc = 0.455 / (np.log10(Re_dyn)**2.58)
+#             cf_comp = cf_inc / np.sqrt(np.abs(1.0 - m_val**2))
+#             cd_f = cf_comp * IF * (S_WET / S_PLAN)
             
-            M_crit = 0.9 - 1.2 * t_over_c - 0.1 * (1 - np.cos(sweep_rad))
-            M_peak = 1.05
-            if m_val < M_crit:
-                cd_wave = 0.0
-            else:
-                amplitude = 20 * (t_over_c**2.5) * np.cos(sweep_rad)**2
-                cd_wave = amplitude * np.sin((m_val - M_crit) / (M_peak - M_crit) * (np.pi / 2))**2
-            cd_induced = (((W_TOG * G) / (0.5 * rho_val * V_val**2 * S_PLAN))**2) / (np.pi * AR * (0.85 - 0.02 * m_val))
+#             M_crit = 0.9 - 1.2 * t_over_c - 0.1 * (1 - np.cos(sweep_rad))
+#             M_peak = 1.05
+#             if m_val < M_crit:
+#                 cd_wave = 0.0
+#             else:
+#                 amplitude = 20 * (t_over_c**2.5) * np.cos(sweep_rad)**2
+#                 cd_wave = amplitude * np.sin((m_val - M_crit) / (M_peak - M_crit) * (np.pi / 2))**2
+#             cd_induced = (((W_TOG * G) / (0.5 * rho_val * V_val**2 * S_PLAN))**2) / (np.pi * AR * (0.85 - 0.02 * m_val))
             
-        elif m_val > 1.0 and m_val < 1.2:
-            Re_dyn = get_reynolds(rho_val, V_val, T_ref, MAC)
-            cf_inc = 0.455 / (np.log10(Re_dyn)**2.58)
-            cf_comp = cf_inc / np.sqrt(np.abs(m_val**2 - 1.0))
-            cd_f = cf_comp * IF * (S_WET / S_PLAN)
+#         elif m_val > 1.0 and m_val < 1.2:
+#             Re_dyn = get_reynolds(rho_val, V_val, T_ref, MAC)
+#             cf_inc = 0.455 / (np.log10(Re_dyn)**2.58)
+#             cf_comp = cf_inc / np.sqrt(np.abs(m_val**2 - 1.0))
+#             cd_f = cf_comp * IF * (S_WET / S_PLAN)
             
-            M_crit = 0.9 - 1.2 * t_over_c - 0.1 * (1 - np.cos(sweep_rad))
-            M_peak = 1.05
-            if m_val <= M_peak:
-                amplitude = 20 * (t_over_c**2.5) * np.cos(sweep_rad)**2
-                cd_wave = amplitude * np.sin((m_val - M_crit) / (M_peak - M_crit) * (np.pi / 2))**2
-            else:
-                amplitude_peak = 20 * (t_over_c**2.5) * np.cos(sweep_rad)**2
-                cd_wave = amplitude_peak / np.sqrt(max(0.1, m_val**2 - 1.0))
-            cd_induced = (((W_TOG * G) / (0.5 * rho_val * V_val**2 * S_PLAN))**2) / (np.pi * AR * (0.85 - 0.02 * m_val))
+#             M_crit = 0.9 - 1.2 * t_over_c - 0.1 * (1 - np.cos(sweep_rad))
+#             M_peak = 1.05
+#             if m_val <= M_peak:
+#                 amplitude = 20 * (t_over_c**2.5) * np.cos(sweep_rad)**2
+#                 cd_wave = amplitude * np.sin((m_val - M_crit) / (M_peak - M_crit) * (np.pi / 2))**2
+#             else:
+#                 amplitude_peak = 20 * (t_over_c**2.5) * np.cos(sweep_rad)**2
+#                 cd_wave = amplitude_peak / np.sqrt(max(0.1, m_val**2 - 1.0))
+#             cd_induced = (((W_TOG * G) / (0.5 * rho_val * V_val**2 * S_PLAN))**2) / (np.pi * AR * (0.85 - 0.02 * m_val))
             
-        else:
-            Re_dyn_hyper = get_reynolds(rho_val, V_val, T_ref, L_REF)
-            cf_hyper = (0.074 / (Re_dyn_hyper**(0.2))) * ((1 / (1 + 0.15 * m_val**2))**0.58)
-            cd_f = cf_hyper * 2.0
+#         else:
+#             Re_dyn_hyper = get_reynolds(rho_val, V_val, T_ref, L_REF)
+#             cf_hyper = (0.074 / (Re_dyn_hyper**(0.2))) * ((1 / (1 + 0.15 * m_val**2))**0.58)
+#             cd_f = cf_hyper * 2.0
             
-            cl_val = (W_TOG * G) / (0.5 * rho_val * V_val**2 * S_PLAN)
-            alpha_rad = np.sqrt(np.abs(cl_val**0.75) / 2)
-            cd_wave = 2 * np.sin(alpha_rad)**3
-            cd_induced = 0.0
+#             cl_val = (W_TOG * G) / (0.5 * rho_val * V_val**2 * S_PLAN)
+#             alpha_rad = np.sqrt(np.abs(cl_val**0.75) / 2)
+#             cd_wave = 2 * np.sin(alpha_rad)**3
+#             cd_induced = 0.0
             
-        cd_vs_rho.append(cd_f + cd_wave + cd_induced)
+#         cd_vs_rho.append(cd_f + cd_wave + cd_induced)
         
-    axs[2, 0].plot(density_sweep, cd_vs_rho, lw=2.5, color=density_colors[m_val], label=f'Mach {m_val:.1f}')
+#     axs[2, 0].plot(density_sweep, cd_vs_rho, lw=2.5, color=density_colors[m_val], label=f'Mach {m_val:.1f}')
 
-axs[2, 0].set_title(r'5. CD Sensitivity to Isolated Ambient Air Density ($\rho$)')
-axs[2, 0].set_xlabel(r'Air Density $\rho$ (kg/m³) [Thin Air $\rightarrow$ Thick Air]')
-axs[2, 0].set_xscale('log')
-axs[2, 0].legend()
+# axs[2, 0].set_title(r'5. CD Sensitivity to Isolated Ambient Air Density ($\rho$)')
+# axs[2, 0].set_xlabel(r'Air Density $\rho$ (kg/m³) [Thin Air $\rightarrow$ Thick Air]')
+# axs[2, 0].set_xscale('log')
+# axs[2, 0].legend()
 
-# Shared Multi-Panel Formatting Rules
-for ax in axs.flat:
+# Format the 1D subplot axes layout perfectly
+for ax in axs:
     ax.set_ylabel(r'Total Drag Coefficient ($C_D$)')
+    ax.set_xlabel('Mach Number')
     ax.set_yscale('log')
     ax.grid(True, which="both", alpha=0.3)
 
-# Assign explicit Mach x-labels where applicable
-axs[0, 0].set_xlabel('Mach Number')
-axs[0, 1].set_xlabel('Mach Number')
-axs[1, 0].set_xlabel('Mach Number')
-axs[1, 1].set_xlabel('Mach Number')
-
-# Delete empty 6th panel slot to keep graph symmetric
-fig.delaxes(axs[2, 1])
-
 plt.tight_layout()
-plt.savefig('comprehensive_sensitivity_5_panel.png', dpi=150, bbox_inches='tight')
+plt.savefig('comprehensive_sensitivity_2_panel.png', dpi=150, bbox_inches='tight')
 plt.show()
