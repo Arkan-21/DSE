@@ -81,7 +81,9 @@ class TankStructure:
         """
         V_cyl  = np.pi * self.r**2 * self.L_cyl
         V_caps = 2.0 * (np.pi * self.r**3 / 3.0)
-        return V_cyl + V_caps
+        self._V_total = V_cyl + V_caps
+        return self._V_total
+
 
     # --------------------------------------------------------
     # STRUCTURAL SIZING  (CS-25 approach, Parello et al. [17])
@@ -524,8 +526,7 @@ class TankThermodynamics:
         m_vent = m_g,1 - m_g,2 = P2·m_g,1·T_g,1 / (P1·T2)
         where T2 = T_sat(P_target).
         """
-        if self.P < P_max_limit:
-            return 0.0
+       
 
         try:
             T2 = cp.PropsSI("T", "P", P_target, "Q", 1, self.fluid)
@@ -552,7 +553,7 @@ if __name__ == "__main__":
     # INITIAL CONDITIONS  (matching Table 1 of Parello et al.)
     # ========================================================
 
-    m_H2_initial         = 54000/2   # hydrogen mass per tank [kg]
+    m_H2_initial         = 41000/2+3000   # hydrogen mass per tank [kg]
                                      # (11420 kg total / 2 tanks)
     p_initial            = 2.0e5    # Pa  (2 bar absolute)
     t_liq_initial        = 20.0     # K
@@ -769,7 +770,4 @@ if __name__ == "__main__":
         fontsize=12
     )
     plt.tight_layout()
-    #plt.savefig("/mnt/user-data/outputs/tank_simulation.png",
-                #dpi=150, bbox_inches="tight")
     plt.show()
-    #print("\nPlot saved to tank_simulation.png")
