@@ -244,4 +244,4 @@ plt.grid(True, linestyle=":", alpha=0.5)
 plt.legend(loc="upper right", ncol=2, fontsize=9)
 plt.tight_layout()
 
-plt.show()
+plt.show() 
