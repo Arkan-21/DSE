@@ -95,15 +95,21 @@ def plot_TOGW_vs_tau():
 def plot_TOGW_vs_payload():
     x1 = np.linspace(4000, 10000, 7)        # Waverider
     y1 = [ 98641.839 , 100687.041, 102709.754, 104724.22, 106730.791 ,108729.881, 110721.833 ]
+    for i in range(len(y1)):
+        y1[i] = (y1[i]-104724.22)/ 104724.22 *100 
 
+    y2 = [414.423, 420.327, 426.038, 431.693, 437.294, 442.843, 448.341 ]
+    for i in range(len(y2)):
+        y2[i] = (y2[i]-431.693)/ 431.693 *100
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    ax.plot(x1, y1, color='#1D9E75', linewidth=2.0, label='Blended body')
+    ax.plot(x1, y1, color='#D85A30', linestyle = 'solid', linewidth=2.0, label='TOGW')
+    ax.plot(x1, y2, color='#378ADD', linestyle = 'solid' ,linewidth=2.0, label=r'S$_{plan}$')
 
-    ax.set_xlabel(r"Payload Mass $M_{pay}$", fontsize=12)
-    ax.set_ylabel(r'TOGW [kg]', fontsize=12)
-    ax.set_title(r'TOGW vs $M_{pay}$', fontsize=13)
+    ax.set_xlabel(r"Payload Mass M$_{pay}$", fontsize=12)
+    ax.set_ylabel(r'Change of output [%]', fontsize=12)
+    ax.set_title(r'TOGW and S$_{plan}$ vs M$_{pay}$', fontsize=13)
 
     ax.set_xlim(3500, 10500.)
     ax.tick_params(direction='in', which='both', labelsize=10)
