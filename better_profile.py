@@ -2619,6 +2619,46 @@ def run_exact_ramjet_diagnostic_check(best: ProfileResult, prefix: str = "optimi
     print(f"Saved exact ramjet diagnostic points: {out}")
     return df
 
+
+
+def print_max_thrust_levels_for_optimal_profile(best: ProfileResult) -> None:
+    """Print maximum available thrust levels for the selected optimal profile."""
+    df = best.table.copy()
+
+    if "mode" not in df.columns or "T_available_kN" not in df.columns:
+        raise KeyError("best.table must contain 'mode' and 'T_available_kN' columns.")
+
+    mode_text = df["mode"].astype(str).str.lower()
+    turbo_df = df[mode_text.str.contains("turbo", na=False)]
+    ramjet_df = df[mode_text.str.contains("ram", na=False)]
+
+    print("\nMax thrust levels from optimized flight profile")
+    print("------------------------------------------------")
+
+    if len(turbo_df) > 0:
+        turbo_idx = turbo_df["T_available_kN"].idxmax()
+        turbo_total = float(df.loc[turbo_idx, "T_available_kN"])
+        turbo_per_engine = turbo_total / float(N_TURBOJETS)
+        print(f"Turbojet max thrust total      : {turbo_total:.2f} kN")
+        print(f"Turbojet max thrust per engine : {turbo_per_engine:.2f} kN/engine")
+        print(f"Turbojet max at Mach           : {float(df.loc[turbo_idx, 'mach']):.3f}")
+        print(f"Turbojet max at altitude       : {float(df.loc[turbo_idx, 'altitude_m']):.1f} m")
+    else:
+        print("Turbojet max thrust total      : not available; no turbojet rows in best.table")
+        print("Turbojet max thrust per engine : not available")
+
+    if len(ramjet_df) > 0:
+        ramjet_idx = ramjet_df["T_available_kN"].idxmax()
+        ramjet_total = float(df.loc[ramjet_idx, "T_available_kN"])
+        ramjet_per_engine = ramjet_total / float(N_RAMJETS)
+        print(f"Ramjet max thrust total        : {ramjet_total:.2f} kN")
+        print(f"Ramjet max thrust per engine   : {ramjet_per_engine:.2f} kN/engine")
+        print(f"Ramjet max at Mach             : {float(df.loc[ramjet_idx, 'mach']):.3f}")
+        print(f"Ramjet max at altitude         : {float(df.loc[ramjet_idx, 'altitude_m']):.1f} m")
+    else:
+        print("Ramjet max thrust total        : not available; no ramjet rows in best.table")
+        print("Ramjet max thrust per engine   : not available")
+
 # =============================================================================
 # 10. MAIN
 # =============================================================================
@@ -2657,6 +2697,7 @@ def main():
             print("\nKeeping previous best result.")
 
     save_and_show_outputs(maps, best, summary)
+    print_max_thrust_levels_for_optimal_profile(best)
     # Exact ramjet diagnostic check disabled by default because it is slow.
     # Uncomment the next line only if you deliberately want exact ramjet spot checks.
     # run_exact_ramjet_diagnostic_check(best)
