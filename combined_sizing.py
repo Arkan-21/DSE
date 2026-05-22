@@ -1,3 +1,7 @@
+# NOTE: This file is ONLY the combined sizing code.
+# It imports your unchanged trajectory optimizer from flight_profile_optimizer_multimaps.py.
+# Do not edit the trajectory optimizer unless you want to change the trajectory itself.
+
 import math
 import contextlib
 import importlib.util
@@ -1664,7 +1668,7 @@ def build_segments_from_updated_mission_profile(
 # Import optimized mission profile from transition optimizer
 # =============================================================================
 
-OPTIMIZED_PROFILE_FILE = "optimize_transition_profile.py"
+OPTIMIZED_PROFILE_FILE = "better_profile.py"
 USE_IMPORTED_OPTIMIZED_PROFILE = True
 MISSION_IMPORTED_THRUST_MARGIN = 1.00
 # If True, imported profile segments use the optimizer's own thrust requirement
@@ -1686,7 +1690,7 @@ def import_transition_optimizer(path: str | Path = OPTIMIZED_PROFILE_FILE):
         else:
             raise FileNotFoundError(
                 f"Could not find transition optimizer file: {path}. "
-                "Put optimize_transition_profile_updated_drag.py in the same folder "
+                "Put flight_profile_optimizer_multimaps.py in the same folder "
                 "as this combined sizing file, or edit OPTIMIZED_PROFILE_FILE."
             )
 
@@ -1712,17 +1716,55 @@ def import_transition_optimizer(path: str | Path = OPTIMIZED_PROFILE_FILE):
 
 def run_transition_profile_optimizer(profile_file: str | Path = OPTIMIZED_PROFILE_FILE):
     """
-    Run the optimized transition-profile code without calling its save/plot routine.
+    Run the optimized trajectory / mission-profile code and return the best profile.
+
+    This function supports the new multidesign optimizer in
+    flight_profile_optimizer_multimaps.py. It also keeps a small fallback for the
+    older optimize_transition_profile.py style scripts.
 
     Returns:
         module, x_best, sizing
+
+    where sizing is a ProfileResult-like object containing a .table DataFrame.
     """
     module = import_transition_optimizer(profile_file)
 
-    def _run():
+    def _run_new_multidesign_optimizer():
+        maps = module.prepare_multidesign_maps()
+        if hasattr(module, "print_map_quality"):
+            module.print_map_quality(maps)
+
+        best_discrete, _summary_discrete, _all_discrete = module.optimize_all_discrete_map_pairs(maps)
+        best = best_discrete
+
+        if getattr(module, "ENABLE_INTERPOLATED_DESIGN_PAIR_SEARCH", False):
+            best_interp, _summary_interp, _all_interp = module.optimize_all_interpolated_design_pairs(
+                maps,
+                center_result=best_discrete,
+            )
+            if best_interp.feasible and (not best.feasible or best_interp.design_score < best.design_score):
+                best = best_interp
+            elif (not best.feasible) and (best_interp.max_deficit_kN < best.max_deficit_kN):
+                best = best_interp
+
+        if getattr(module, "ENABLE_INTERPOLATED_DESIGN_REFINEMENT", False):
+            refined = module.refine_between_complete_maps(maps, best)
+            if refined.feasible and (not best.feasible or refined.design_score <= best.design_score * 1.02):
+                best = refined
+            elif (not best.feasible) and (refined.max_deficit_kN < best.max_deficit_kN):
+                best = refined
+
+        return best.x_profile, best
+
+    def _run_old_transition_optimizer():
         maps = module.prepare_thrust_maps()
         x_best, sizing = module.optimize_profile(maps)
         return x_best, sizing
+
+    def _run():
+        if hasattr(module, "prepare_multidesign_maps") and hasattr(module, "optimize_all_discrete_map_pairs"):
+            return _run_new_multidesign_optimizer()
+        return _run_old_transition_optimizer()
 
     if MISSION_OPTIMIZER_SUPPRESS_OUTPUT:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -1784,6 +1826,12 @@ def build_segments_from_imported_optimized_profile(
     """
     module, x_best, sizing = run_transition_profile_optimizer(profile_file)
     df = sizing.table.copy().sort_values("mach").reset_index(drop=True)
+
+    # The new multidesign trajectory optimizer names this column T_available_kN.
+    # The combined sizing code uses sized_T_available_kN to make clear that this
+    # value comes from the sized/selected engine map.
+    if "sized_T_available_kN" not in df.columns and "T_available_kN" in df.columns:
+        df["sized_T_available_kN"] = df["T_available_kN"]
 
     # Make sure required columns exist. This catches mismatch if the optimizer script changed.
     required_columns = [
@@ -1948,7 +1996,7 @@ def build_segments_from_imported_optimized_profile(
         "source_file": str(profile_file),
         "imported_rows": len(df),
         "M_start": float(df["mach"].iloc[0]),
-        "M_switch": getattr(module, "M_SWITCH", 3.0),
+        "M_switch": getattr(sizing, "transition_mach", getattr(module, "M_SWITCH", 3.0)),
         "M_cruise": M_cruise,
         "h_start": float(df["altitude_m"].iloc[0]),
         "h_cruise": h_cruise,
@@ -1959,16 +2007,16 @@ def build_segments_from_imported_optimized_profile(
         "descent_fits_total_range": descent.get("descent_fits_total_range", True),
         "final_total_range": descent.get("final_total_range", cruise_time * V_cruise + descent.get("x_descent", 0.0)),
         "x_descent": descent.get("x_descent", 0.0),
-        "turbo_design_lbf_per_engine": sizing.turbo_design_lbf_per_engine,
-        "turbo_design_kN_per_engine": sizing.turbo_design_lbf_per_engine * 0.0044482216152605,
-        "ramjet_design_mdot_kg_s_total": sizing.ramjet_design_mdot_kg_s,
-        "ramjet_design_mdot_kg_s_per_engine": sizing.ramjet_design_mdot_kg_s / max(1, getattr(module, "N_RAMJETS", 1)),
+        "turbo_design_lbf_per_engine": getattr(sizing, "turbo_design_lbf_per_engine", 0.0),
+        "turbo_design_kN_per_engine": getattr(sizing, "turbo_design_lbf_per_engine", 0.0) * 0.0044482216152605,
+        "ramjet_design_mdot_kg_s_total": getattr(sizing, "ramjet_design_mdot_kg_s", 0.0),
+        "ramjet_design_mdot_kg_s_per_engine": getattr(sizing, "ramjet_design_mdot_kg_s", 0.0) / max(1, getattr(module, "N_RAMJETS", 1)),
         "use_imported_thrust_requirement_for_T_used": USE_IMPORTED_THRUST_REQUIREMENT_FOR_T_USED,
         "mission_imported_thrust_margin": MISSION_IMPORTED_THRUST_MARGIN,
-        "turbo_scale": sizing.max_turbo_scale,
-        "ramjet_scale": sizing.max_ramjet_scale,
-        "mission_optimizer_objective": sizing.objective,
-        "mission_optimizer_penalty": sizing.penalty,
+        "turbo_scale": getattr(sizing, "max_turbo_scale", float("nan")),
+        "ramjet_scale": getattr(sizing, "max_ramjet_scale", float("nan")),
+        "mission_optimizer_objective": getattr(sizing, "objective", float("nan")),
+        "mission_optimizer_penalty": getattr(sizing, "penalty", float("nan")),
     }
 
     return segments, profile
@@ -2047,7 +2095,7 @@ if __name__ == "__main__":
         KIT=1.0,
         I_tank=4.0,
         rho_LH2=70.0,
-        rho_JetA=70.0,
+        rho_JetA=800.0,
         k_pf=1.0,
         I_sub=0.04,
         W_prop=17_053.50436,
