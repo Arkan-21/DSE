@@ -2052,7 +2052,7 @@ if __name__ == "__main__":
         I_sub=0.04,
         W_prop=17_053.50436,
         V_prop=166.0221082,
-        W_payload=7_000.0,
+        W_payload=3_840.0,
         rho_payload=100.0,
         segments=segments,
         k_rf=0.06,

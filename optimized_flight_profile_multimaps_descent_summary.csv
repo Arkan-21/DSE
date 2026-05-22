@@ -1,0 +1,2 @@
+requested_total_range_m,x_climb_end_m,cruise_range_m,descent_range_m,final_range_m,cruise_fits_requested_range,h_cruise_m,M_cruise,u_cruise_m_s,t_descent_s,a_x_descent_m_s2,a_x_magnitude_m_s2,a_y_magnitude_m_s2,a_total_m_s2,a_limit_m_s2
+9500000.0,768655.3627513212,7955302.635010674,776042.0022380041,9500000.0,True,30000.0,5.0,1509.0049328945215,1028.5479991764203,-1.4671215481463318,1.4671215481463318,0.11343109346519989,1.4715,1.4715

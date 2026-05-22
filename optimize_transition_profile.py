@@ -1112,6 +1112,82 @@ def print_map_quality(maps: ThrustMaps) -> None:
     )
 
 
+
+
+
+def plot_thrust_maps(maps: ThrustMaps, mach_points: int = 120, alt_points: int = 120) -> None:
+    """
+    Plot two Mach-altitude heatmaps:
+      1) baseline available thrust [kN]
+      2) required thrust [kN]
+
+    Plot convention:
+      x-axis = Mach number
+      y-axis = altitude [km]
+      colour = thrust [kN]
+
+    The available-thrust map uses the turbojet map below M_SWITCH and the
+    ramjet map at/above M_SWITCH. Points outside an engine map's altitude/Mach
+    range are left blank if ALLOW_EXTRAPOLATION = False.
+    """
+    import matplotlib.pyplot as plt
+
+    # Use the full mission Mach/altitude plotting domain.
+    mach_grid = np.linspace(M_TAKEOFF, M_CRUISE, mach_points)
+    alt_grid_m = np.linspace(0.0, H_CRUISE_M, alt_points)
+
+    available_kN = np.full((len(alt_grid_m), len(mach_grid)), np.nan)
+    required_kN = np.full((len(alt_grid_m), len(mach_grid)), np.nan)
+
+    for i, h in enumerate(alt_grid_m):
+        for j, M in enumerate(mach_grid):
+            _, T_avail = thrust_from_maps_kN(maps, M, h)
+            available_kN[i, j] = T_avail
+            required_kN[i, j] = drag_and_required_thrust_kN(
+                M,
+                h,
+                accel_g=ACCEL_G_TARGET,
+            )["thrust_req_kN"]
+
+    # ------------------------------------------------------------------
+    # Available thrust heatmap
+    # ------------------------------------------------------------------
+    plt.figure(figsize=(9, 5.5))
+    mesh = plt.pcolormesh(
+        mach_grid,
+        alt_grid_m / 1000.0,
+        available_kN,
+        shading="auto",
+    )
+    plt.colorbar(mesh, label="Available thrust [kN]")
+    plt.axvline(M_SWITCH, linestyle="--", label="Turbojet/ramjet switch")
+    plt.xlabel("Mach number")
+    plt.ylabel("Altitude [km]")
+    plt.title("Available thrust map")
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+    # ------------------------------------------------------------------
+    # Required thrust heatmap
+    # ------------------------------------------------------------------
+    plt.figure(figsize=(9, 5.5))
+    mesh = plt.pcolormesh(
+        mach_grid,
+        alt_grid_m / 1000.0,
+        required_kN,
+        shading="auto",
+    )
+    plt.colorbar(mesh, label="Required thrust [kN]")
+    plt.axvline(M_SWITCH, linestyle="--", label="Turbojet/ramjet switch")
+    plt.xlabel("Mach number")
+    plt.ylabel("Altitude [km]")
+    plt.title("Required thrust map")
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+
 # =============================================================================
 # 10. OUTPUT
 # =============================================================================
@@ -1119,6 +1195,7 @@ def print_map_quality(maps: ThrustMaps) -> None:
 def save_outputs(
     x_best: np.ndarray,
     sizing: SizingResult,
+    maps: ThrustMaps | None = None,
     prefix: str = "optimized_flight_profile_maps",
 ) -> None:
     """
@@ -1185,6 +1262,10 @@ def save_outputs(
         import matplotlib.pyplot as plt
 
         df = sizing.table
+
+        # 2D Mach-altitude maps requested by the user.
+        if maps is not None:
+            plot_thrust_maps(maps)
 
         plt.figure(figsize=(9, 5))
         plt.plot(df["mach"], df["altitude_m"] / 1000.0, label="Optimized profile")
@@ -1307,7 +1388,7 @@ def main():
     print_map_quality(maps)
 
     x_best, sizing = optimize_profile(maps)
-    save_outputs(x_best, sizing)
+    save_outputs(x_best, sizing, maps)
 
     # Uncomment if you want to spend extra time verifying real engine calls.
     # exact_engine_check_at_profile(x_best, every_nth_point=3)
