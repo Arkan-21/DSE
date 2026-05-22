@@ -854,7 +854,7 @@ if __name__ == "__main__":
         mach=5.0,
         range_value=9_500_000.0,
         altitude_m=30_000.0,
-        w_pay=7_000,
+        w_pay=3840,
         rho_pay=100.0,
         rho_fuel=70.0,
         eta_v=0.8,
@@ -892,7 +892,7 @@ if __name__ == "__main__":
     )
 
 
-    plot_converged_istr24_results(results)
+    plot_converged_istr24_results_individual(results)
 
     print("\nTau and I_str sensitivity sweep")
     print("-------------------------------")
