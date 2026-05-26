@@ -1,4 +1,0 @@
-source,turbo_design_lbf_per_engine,ramjet_design_mdot_kg_s,transition_mach,feasible,design_score,profile_objective,penalty,max_deficit_kN,min_margin_kN
-complete_map_pair,200000.0,200.0,2.5,False,2.333333333333333,25957251.973097797,0.0,160.89221851880393,-160.89221851880393
-complete_map_pair,200000.0,200.0,2.75,True,2.333333333333333,-0.04360617116239485,0.0,0.0,43.606171162394844
-complete_map_pair,200000.0,200.0,3.0,True,2.333333333333333,-0.045933696265303754,0.0,0.0,45.93369626530375
