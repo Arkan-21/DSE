@@ -1,0 +1,164 @@
+
+# --- restructured-project import bootstrap ---
+from pathlib import Path as _DSE_Path
+import sys as _DSE_sys
+_DSE_ROOT = next((p for p in _DSE_Path(__file__).resolve().parents if (p / "src").exists() and (p / "data").exists()), None)
+if _DSE_ROOT is not None:
+    for _DSE_p in [
+        _DSE_ROOT / "src",
+        _DSE_ROOT / "src" / "common",
+        _DSE_ROOT / "src" / "aerodynamics" / "drag",
+        _DSE_ROOT / "src" / "propulsion",
+        _DSE_ROOT / "src" / "propulsion" / "engine",
+        _DSE_ROOT / "src" / "thermal",
+        _DSE_ROOT / "src" / "sizing",
+        _DSE_ROOT / "src" / "tanks",
+        _DSE_ROOT / "src" / "environment",
+        _DSE_ROOT / "src" / "trade_offs",
+        _DSE_ROOT / "external",
+        _DSE_ROOT / "external" / "pycycle_examples",
+    ]:
+        if _DSE_p.exists() and str(_DSE_p) not in _DSE_sys.path:
+            _DSE_sys.path.insert(0, str(_DSE_p))
+# --- end bootstrap ---
+import numpy as np
+from CryogenicTanks import TankStructure
+
+class KeroseneTank(TankStructure):
+
+    kerosene_mass    = 39561   # kg
+    kerosene_density = 70.85       # kg/m^3
+    kerosene_volume  = kerosene_mass / kerosene_density  # m³
+
+    def __init__(self, d, L_cyl, delta_P_max, delta_P_operational,
+                 ins_thickness, rho_ins, k_ins):
+        self.d                   = d
+        self.L_cyl               = L_cyl
+        self.delta_P_max         = delta_P_max
+        self.delta_P_operational = delta_P_operational
+        self.ins_thickness       = ins_thickness
+        self.rho_ins             = rho_ins
+        self.k_ins               = k_ins
+
+        self.structure = TankStructure(
+            diameter            = d,
+            cylindrical_length  = L_cyl,
+            delta_P_max         = delta_P_max,
+            delta_P_operational = delta_P_operational,
+            ins_thickness       = ins_thickness,
+            rho_ins             = rho_ins,
+            k_ins               = k_ins,
+        )
+
+    def _make_tank(self, diameter, length):
+        """Helper: construct a TankStructure and return (volume, mass)."""
+        s = TankStructure(
+            diameter            = diameter,
+            cylindrical_length  = length,
+            delta_P_max         = self.delta_P_max,
+            delta_P_operational = self.delta_P_operational,
+            ins_thickness       = self.ins_thickness,
+            rho_ins             = self.rho_ins,
+            k_ins               = self.k_ins,
+        )
+        return s.V_total, s.m_tank
+
+    def tank_mass_options(self):
+        # Candidate discrete stage diameters (largest → smallest)
+        x= 3.5
+        stage_diameters = [x,  x/1.5, x/4, x/6, x/8]
+        possible_lengths = np.arange(0.2, 25.1, 0.1)
+
+        min_mass   = np.inf
+        best_d     = None
+        best_L     = None
+        best_layout = None
+
+        for d in stage_diameters:
+            for L in possible_lengths:
+                layout         = []
+                total_mass     = 0.0
+                remaining_vol  = self.kerosene_volume
+
+                for stage_d in stage_diameters:
+                    if stage_d > d:
+                        # Don't use stages larger than the primary tank
+                        continue
+                    if remaining_vol <= 0:
+                        break
+
+                    tank_vol, tank_mass = self._make_tank(stage_d, L)
+
+                    if tank_vol <= 0:
+                        continue
+
+                    # How many of this tank size do we need?
+                    n_tanks = max(1, int(np.floor(remaining_vol / tank_vol)))
+
+                    used_vol    = n_tanks * tank_vol
+                    remaining_vol -= used_vol
+                    total_mass  += n_tanks * tank_mass
+
+                    layout.append({
+                        "diameter": stage_d,
+                        "length":   L,
+                        "n_tanks":  n_tanks,
+                        "v_each":   tank_vol,
+                        "m_each":   tank_mass,
+                    })
+
+                # Handle leftover volume: add one small top-up tank
+                if remaining_vol > 0:
+                    # Use the smallest available stage diameter for the top-up
+                    smallest_d = stage_diameters[-1]
+                    _, tank_mass_topup = self._make_tank(smallest_d, L)
+                    total_mass += tank_mass_topup   # 1 extra tank (slight overfill)
+                    layout.append({
+                        "diameter": smallest_d,
+                        "length":   L,
+                        "n_tanks":  1,
+                        "v_each":   None,   # partial fill
+                        "m_each":   tank_mass_topup,
+                    })
+
+                if total_mass < min_mass:
+                    min_mass    = total_mass
+                    best_d      = d
+                    best_L      = L
+                    best_layout = layout
+
+        print("\nOPTIMAL PRIMARY TANK:")
+        print(f"  Max stage diameter : {best_d:.2f} m")
+        print(f"  Cylindrical length : {best_L:.2f} m")
+        print(f"  Total system mass  : {min_mass:.2f} kg\n")
+
+        print("TANK STAGING BREAKDOWN:")
+        for i, stage in enumerate(best_layout):
+            v_str = f"{stage['v_each']:.3f} m³" if stage["v_each"] else "top-up"
+            print(
+                f"  Stage {i}: D={stage['diameter']:.3f} m, "
+                f"L={stage['length']:.2f} m, "
+                f"n={stage['n_tanks']}, "
+                f"V_each={v_str}, "
+                f"m_each={stage['m_each']:.2f} kg"
+            )
+        total_vol = sum(
+            (s["n_tanks"] * s["v_each"])
+            for s in best_layout if s["v_each"] is not None
+        )
+        print(f"\n  Target volume : {self.kerosene_volume:.3f} m³")
+        print(f"  Covered volume: {total_vol:.3f} m³")
+        print(f"  Surplus       : {total_vol - self.kerosene_volume:.3f} m³")
+
+
+if __name__ == "__main__":
+    kerosene_tank = KeroseneTank(
+        d                   = 2.5,
+        L_cyl               = 10,
+        delta_P_max         = 1e5,
+        delta_P_operational = 1e5,
+        ins_thickness       = 0.05,
+        rho_ins             = 300,
+        k_ins               = 0.03,
+    )
+    kerosene_tank.tank_mass_options()
