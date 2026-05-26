@@ -2,6 +2,8 @@ import numpy as np
 
 n_pax = 32
 
+tau = 0.12
+
 #Aircraft Weight:
 TOGW = 96119.406                    #kg    
 W_fuel_LH2_ramjet = 26208.436       #kg
@@ -33,3 +35,16 @@ S_wetted = 1092.801                 #m^2
 
 
 
+Interior Dimensions:
+Seat_pitch = 1                      #m
+Seat_width = 0.5                    #m
+Seat_height = 1.65                  #m
+N_seats_per_row	= 8         
+Aisle_width	= 0.5                   #m
+Aisle_height = 2.3                  #m  
+N_aisles = 2
+Cockpit_length	= 2.5               #m
+fuselage_width = 7                  #m
+fuselage_height = 3.5               #m
+volume_cargo_per_passenger = 0.13   #m^3
+Additioanal_cargo_volume = 11.83    #m^3
