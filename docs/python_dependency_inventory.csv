@@ -1,0 +1,200 @@
+file,lines,imports,referenced_files
+better_profile.py,2707,"__future__, contextlib, dataclasses, functools, importlib, io, matplotlib, numpy, pandas, pathlib, scipy, time, traceback",turbojet_multidesign_thrust_maps.npz; ramjet_multidesign_thrust_maps.npz; turbojet_surrogate_calibration.npz; ramjet_surrogate_calibration_limited_mach_alt.npz; {prefix}_available_thrust_map.png; {prefix}_required_thrust_map.png; Saved available thrust map PNG: {prefix}_available_thrust_map.png; Saved required thrust map PNG: {prefix}_required_thrust_map.png; {prefix}_design_pair_summary.csv; {prefix}_best_profile.csv; {prefix}_takeoff_to_landing_profile.csv; {prefix}_descent_summary.csv; {prefix}_altitude_vs_range_takeoff_to_landing.png; Saved altitude-vs-range PNG: {prefix}_altitude_vs_range_takeoff_to_landing.png; {prefix}_altitude_vs_mach_takeoff_to_landing.png; Saved altitude-vs-Mach PNG: {prefix}_altitude_vs_mach_takeoff_to_landing.png; {prefix}_exact_ramjet_diagnostic_points.csv
+Boom_map.py,555,"geodatasets, geopandas, matplotlib, numpy, pyproj, scipy, shapely",isa_profile.png; Saved: isa_profile.png; coastal_exclusion_map.png; Saved: coastal_exclusion_map.png; mach_altitude_envelope.png; Saved: mach_altitude_envelope.png
+coastal_zones.py,255,"cartopy, geodatasets, geopandas, matplotlib, numpy, pyproj, shapely",
+combined_sizing.py,2202,"contextlib, dataclasses, importlib, io, math, numpy, pathlib, scipy, sys, typing",
+Engine/Engine_Cooling.py,480,"__future__, dataclasses, matplotlib, numpy, ramjet_01, typing",ramjet_cooling.png
+Engine/ramjet_01.py,1580,"__future__, cea, matplotlib, numpy, scipy",
+Engine/scramjet_01.py,1706,"__future__, cea, matplotlib, numpy, pandas, scipy",
+Engine/turbojet_01.py,405,"__future__, dataclasses, math, matplotlib, numpy, pandas, typing",thrust_vs_mach_altitude.png; turbojet_mach_altitude_results.csv; thrust_vs_mach_altitude.png;   thrust_vs_mach_altitude.png;   turbojet_mach_altitude_results.csv
+example_cycles/__init__.py,0,,
+example_cycles/afterburning_turbojet.py,288,"numpy, openmdao, pycycle, sys, time",
+example_cycles/electric_propulsor.py,196,"matplotlib, numpy, openmdao, pycycle, time",
+example_cycles/high_bypass_turbofan.py,479,"numpy, openmdao, pycycle, sys, time",
+example_cycles/mixedflow_turbofan.py,431,"numpy, openmdao, pycycle, sys, time",
+example_cycles/multi_spool_turboshaft.py,361,"numpy, openmdao, pycycle, sys, time",
+example_cycles/N+3ref/benchmark_N3_MDP.py,138,"N3_MDP, numpy, openmdao, os, pycycle, unittest",
+example_cycles/N+3ref/benchmark_N3_MDP_Opt.py,139,"N3_MDP_Opt, numpy, openmdao, os, pycycle, unittest",
+example_cycles/N+3ref/benchmark_N3_MDP_verif.py,144,"N3_MDP_verif, numpy, openmdao, os, pycycle, unittest",
+example_cycles/N+3ref/benchmark_N3_SPD.py,139,"N3_SPD, numpy, openmdao, os, pycycle, unittest",
+example_cycles/N+3ref/benchmark_N3ref.py,133,"N3ref, numpy, openmdao, os, pycycle, unittest",
+example_cycles/N+3ref/N3_Fan_map.py,103,"numpy, pycycle",
+example_cycles/N+3ref/N3_HPC_map.py,126,"numpy, pycycle",
+example_cycles/N+3ref/N3_HPT_map.py,69,"numpy, pycycle",
+example_cycles/N+3ref/N3_LPC_map.py,114,"numpy, pycycle",
+example_cycles/N+3ref/N3_LPT_map.py,73,"numpy, pycycle",
+example_cycles/N+3ref/N3_MDP.py,135,"N3ref, numpy, openmdao, pickle, pprint, pycycle, time",
+example_cycles/N+3ref/N3_MDP_Opt.py,136,"N3ref, numpy, openmdao, pickle, pprint, pycycle, time",
+example_cycles/N+3ref/N3_MDP_verif.py,134,"N3ref, numpy, openmdao, pickle, pprint, pycycle, time",derivs.pkl
+example_cycles/N+3ref/N3_SPD.py,126,"N3ref, numpy, openmdao, pickle, pprint, pycycle, time",
+example_cycles/N+3ref/N3ref.py,611,"N3_Fan_map, N3_HPC_map, N3_HPT_map, N3_LPC_map, N3_LPT_map, numpy, openmdao, pycycle, small_core_eff_balance, sys, time",
+example_cycles/N+3ref/small_core_eff_balance.py,88,"numpy, openmdao, scipy",
+example_cycles/simple_turbojet.py,252,"openmdao, pycycle, sys, time",
+example_cycles/single_spool_turboshaft.py,252,"openmdao, pycycle, sys, time",
+example_cycles/tab_thermo_data_generator.py,173,"numpy, openmdao, pickle, pycycle",air_jetA.pkl; air_jetA.pkl
+example_cycles/tests/benchmark_ab_turbojet.py,492,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_electric_propulsor.py,70,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_hbtf.py,218,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_mixedflow_turbofan.py,130,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_multi_spool_turboshaft.py,167,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_simple_turbojet.py,136,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_single_spool_turboshaft.py,140,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_wet_propulsor.py,61,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/benchmark_wet_simple_turbojet.py,67,"example_cycles, numpy, openmdao, os, pycycle, unittest",
+example_cycles/tests/test_all_examples.py,123,"openmdao, os, parameterized, pathlib, subprocess, unittest",
+example_cycles/wet_propulsor.py,189,"numpy, openmdao, pycycle, time",
+example_cycles/wet_simple_turbojet.py,233,"openmdao, pycycle, sys, time",
+Heat_temps_turbulent.py,593,"matplotlib, numpy, pandas, pathlib",density_velocity_database.csv; wall_temperature.pdf; heat_flux.pdf; adiabatic_temperature.pdf; reynolds.pdf
+Hypersonic Drag Estimation Alex.py,214,"matplotlib, numpy",
+Hypersonic Drag Estimation.py,92,"matplotlib, numpy",
+Hypersonicdragpluh.py,447,"matplotlib, numpy",
+Improved Merged Drag with Altitude Input.py,262,"csv, matplotlib, numpy",mach_fixed_altitude_output.csv
+Initial_sizing.py,929,"__future__, dataclasses, math, matplotlib, mpl_toolkits, numpy",solution_space_wing_body.png
+Input Altitude Merged Drag.py,278,"csv, matplotlib, numpy",mach_fixed_altitude_output.csv
+Input_Alt_Merged_Drag_with_alt.py,342,"csv, matplotlib, numpy",mach_fixed_altitude_output.csv
+isa_atmosphere.py,79,math,
+Merged Drag to Mach Graph.py,233,"matplotlib, numpy",
+Merged Drag to Mach Numerical and Graph with Altitude Input.py,271,"csv, matplotlib, numpy",mach_fixed_altitude_output.csv
+Merged Drag to Mach Numerical and Graph.py,263,"csv, matplotlib, numpy",mach_regime_continuous_output.csv
+Merged Drag to Mach.py,227,"matplotlib, numpy",
+Mission_Heat_flux_Laminar.py,391,"matplotlib, numpy, pandas",density_velocity_database.csv
+Old_rubbish/benjamin.py,129,"matplotlib, numpy",
+Old_rubbish/empirical_drag.py,461,"Engine, math, matplotlib, numpy, pandas, scipy",drag_vs_mach_alpha_sweep.png
+Old_rubbish/Missiondensitiesv.py,146,"isa_atmosphere, numpy, pandas",density_velocity_database.csv
+Old_rubbish/old_combined_m8.py,1229,"dataclasses, math, numpy",
+Old_rubbish/optimize_transition_profile.py,1398,"__future__, contextlib, dataclasses, functools, importlib, io, matplotlib, numpy, os, pandas, pathlib, scipy, traceback",turbojet_thrust_map.npz; ramjet_thrust_map.npz
+Old_rubbish/plot_altitude_vs_range.py,413,"__future__, importlib, math, matplotlib, numpy, pathlib, sys",
+Old_rubbish/thrust_vs_drag.py,5345,"__future__, cea, contextlib, dataclasses, io, math, matplotlib, numpy, pandas, scipy, typing, warnings",ramjet_thrust_sweep_results.csv; mach3_thrust_drag_vs_altitude.png; mach3_thrust_drag_vs_altitude.png
+pycycle/__init__.py,1,,
+pycycle/api.py,44,pycycle,
+pycycle/connect_flow.py,11,warnings,
+pycycle/constants.py,72,"os, pickle, warnings",air_jetA.pkl
+pycycle/docs/conf.py,150,"importlib, mock, numpydoc, openmdao, os, pycycle, sys, textwrap",_static/OpenMDAO_Logo.png; globaltoc.html; searchbox.html
+pycycle/element_base.py,63,"numpy, openmdao, pycycle",
+pycycle/elements/__init__.py,0,,
+pycycle/elements/ambient.py,68,"openmdao, pycycle",
+pycycle/elements/bleed_out.py,206,"collections, numpy, openmdao, pycycle",
+pycycle/elements/cfd_start.py,90,"openmdao, pycycle",
+pycycle/elements/combustor.py,181,"numpy, openmdao, pycycle",
+pycycle/elements/compressor.py,588,"collections, itertools, numpy, openmdao, pycycle",
+pycycle/elements/compressor_map.py,331,"numpy, openmdao, pycycle",
+pycycle/elements/cooling.py,339,"openmdao, pycycle",
+pycycle/elements/duct.py,272,"numpy, openmdao, pycycle",
+pycycle/elements/flight_conditions.py,145,"openmdao, pycycle",
+pycycle/elements/flow_start.py,90,"numpy, openmdao, pycycle",
+pycycle/elements/gearbox.py,118,openmdao,
+pycycle/elements/inlet.py,219,"openmdao, pycycle",
+pycycle/elements/mixer.py,312,"numpy, openmdao, pycycle",
+pycycle/elements/nozzle.py,465,"openmdao, pycycle",
+pycycle/elements/performance.py,124,openmdao,
+pycycle/elements/shaft.py,147,"numpy, openmdao",
+pycycle/elements/splitter.py,219,"numpy, openmdao, pycycle",
+pycycle/elements/test/__init__.py,0,,
+pycycle/elements/test/test_ambient.py,63,"numpy, openmdao, os, pycycle, unittest",/reg_data/ambient.csv
+pycycle/elements/test/test_bleed_out.py,67,"numpy, openmdao, os, pycycle, unittest",
+pycycle/elements/test/test_cfd_start.py,42,"numpy, openmdao, pycycle, unittest",
+pycycle/elements/test/test_combustor.py,131,"numpy, openmdao, os, pycycle, unittest",/reg_data/combustorJP7.csv
+pycycle/elements/test/test_compressor.py,140,"numpy, openmdao, os, pycycle, unittest",/reg_data/compressor.csv
+pycycle/elements/test/test_compressor_map.py,173,"numpy, openmdao, os, pycycle, unittest",/reg_data/compressorOD1.csv
+pycycle/elements/test/test_compressor_od.py,216,"numpy, openmdao, os, pycycle, unittest",/reg_data/compressorOD1.csv
+pycycle/elements/test/test_cooling.py,270,"numpy, openmdao, pycycle, unittest",
+pycycle/elements/test/test_duct.py,195,"numpy, openmdao, os, pycycle, unittest",/reg_data/duct.csv
+pycycle/elements/test/test_flightconditions.py,78,"numpy, openmdao, os, pycycle, unittest",/reg_data/ambient.csv
+pycycle/elements/test/test_flow_start.py,228,"numpy, openmdao, os, pycycle, unittest",/reg_data/flowstart.csv
+pycycle/elements/test/test_inlet.py,151,"numpy, openmdao, os, pycycle, unittest",/reg_data/inlet.csv
+pycycle/elements/test/test_mixer.py,130,"numpy, openmdao, os, pycycle, unittest",
+pycycle/elements/test/test_nozzle.py,91,"numpy, openmdao, os, pycycle, unittest",/reg_data/nozzle.csv
+pycycle/elements/test/test_nozzle_CV_CD.py,190,"numpy, openmdao, os, pycycle, unittest",/reg_data/nozzleCV.csv; /reg_data/nozzleCD.csv; /reg_data/nozzleCD_CV.csv; /reg_data/nozzleCV__Cfg.csv; /reg_data/nozzleCD__Cfg.csv; /reg_data/nozzleCD_CV__Cfg.csv
+pycycle/elements/test/test_shaft.py,88,"numpy, openmdao, os, pycycle, unittest",/reg_data/shaft.csv
+pycycle/elements/test/test_splitter.py,134,"numpy, openmdao, os, pycycle, unittest",/reg_data/splitter.csv
+pycycle/elements/test/test_turbine.py,176,"numpy, openmdao, os, pycycle, unittest",/reg_data/turbine.csv
+pycycle/elements/test/test_turbine_map.py,238,"numpy, openmdao, os, pycycle, unittest",/reg_data/turbineOD1.csv
+pycycle/elements/test/test_turbine_od.py,217,"numpy, openmdao, os, pycycle, unittest",/reg_data/turbineOD1.csv
+pycycle/elements/test/test_usatm1976.py,27,"numpy, openmdao, os, pycycle, unittest",
+pycycle/elements/turbine.py,637,"collections, copy, numpy, openmdao, pycycle",
+pycycle/elements/turbine_map.py,194,"openmdao, pycycle",
+pycycle/elements/US1976.py,105,"collections, numpy, openmdao, scipy",
+pycycle/flow_in.py,58,"numpy, openmdao",
+pycycle/maps/__init__.py,0,,
+pycycle/maps/axi3_2.py,146,"numpy, pycycle",
+pycycle/maps/axi5.py,173,"numpy, pycycle",
+pycycle/maps/Fan_map.py,133,"numpy, pycycle",
+pycycle/maps/HPC_map.py,132,"numpy, pycycle",
+pycycle/maps/hpt1269.py,67,"numpy, pycycle",
+pycycle/maps/HPT_map.py,68,"numpy, pycycle",
+pycycle/maps/LPC_map.py,130,"numpy, pycycle",
+pycycle/maps/lpt2269.py,73,"numpy, pycycle",
+pycycle/maps/LPT_map.py,73,"numpy, pycycle",
+pycycle/maps/map_data.py,4,,
+pycycle/maps/ncp01.py,116,"numpy, pycycle",
+pycycle/maps/test/__init__.py,0,,
+pycycle/mp_cycle.py,279,"collections, networkx, openmdao, pycycle, warnings",
+pycycle/passthrough.py,61,"numpy, openmdao",
+pycycle/tests/__init__.py,0,,
+pycycle/tests/test_element.py,1,unittest,
+pycycle/thermo/__init__.py,0,,
+pycycle/thermo/cea/__init__.py,0,,
+pycycle/thermo/cea/chem_eq.py,356,"numpy, openmdao, pycycle",
+pycycle/thermo/cea/props_calcs.py,259,"numpy, openmdao, pycycle",
+pycycle/thermo/cea/props_rhs.py,181,"numpy, openmdao, pycycle",
+pycycle/thermo/cea/species_data.py,186,"collections, numpy, pycycle, scipy",
+pycycle/thermo/cea/test/__init__.py,0,,
+pycycle/thermo/cea/test/test_chem_eq_co2.py,34,"openmdao, pycycle, unittest",
+pycycle/thermo/cea/test/test_chem_eq_janaf.py,41,"numpy, openmdao, pycycle, unittest",
+pycycle/thermo/cea/test/test_props_rhs_co2.py,109,"numpy, openmdao, pycycle, unittest",
+pycycle/thermo/cea/test/test_species_data.py,149,"numpy, openmdao, pycycle, scipy, unittest",
+pycycle/thermo/cea/test/test_thermo_add_cea.py,189,"numpy, openmdao, pycycle, unittest",
+pycycle/thermo/cea/thermo_add.py,192,"numpy, openmdao, pycycle",
+pycycle/thermo/cea/thermo_data/__init__.py,0,,
+pycycle/thermo/cea/thermo_data/co2_co_o2.py,59,"collections, numpy",
+pycycle/thermo/cea/thermo_data/janaf.py,293,"collections, numpy",
+pycycle/thermo/cea/thermo_data/wet_air.py,18,"collections, numpy, pycycle",
+pycycle/thermo/static_ps_calc.py,77,"numpy, openmdao, pycycle",
+pycycle/thermo/static_ps_resid.py,301,"numpy, openmdao, pycycle, scipy",
+pycycle/thermo/tabular/__init__.py,0,,
+pycycle/thermo/tabular/tab_cea_comparison.py,63,"numpy, openmdao, pickle, pycycle",air_jetA.pkl
+pycycle/thermo/tabular/tabular_thermo.py,50,"numpy, openmdao, pycycle",
+pycycle/thermo/tabular/test/__init__.py,0,,
+pycycle/thermo/tabular/test/test_tab_thermo.py,39,"numpy, openmdao, pycycle, unittest",
+pycycle/thermo/tabular/test/test_thermo_add.py,266,"numpy, openmdao, pycycle, unittest",
+pycycle/thermo/tabular/thermo_add.py,148,"numpy, openmdao, pycycle",
+pycycle/thermo/test/__init__.py,0,,
+pycycle/thermo/test/test_thermo_total_static_cea.py,351,"numpy, openmdao, os, pycycle, unittest",NPSS_Static_CEA_Data.csv
+pycycle/thermo/test/test_thermo_total_static_tabulated.py,251,"numpy, openmdao, os, pycycle, unittest",
+pycycle/thermo/thermo.py,252,"openmdao, pycycle",
+pycycle/thermo/unit_comps.py,110,"inspect, numpy, openmdao, pycycle",
+pycycle/viewers.py,449,"matplotlib, numpy, openmdao, sys",
+Radii_alt_graphing.py,254,"matplotlib, numpy, pathlib",stagnation_temperature_vs_altitude.pdf
+ramjet_revised.py,1690,"__future__, cea, matplotlib, numpy, scipy",
+RegenCooling/CEAClass.py,118,rocketcea,
+RegenCooling/FilmCooling.py,104,"numpy, scipy",
+RegenCooling/GenerateMesh.py,85,"config, gmsh, numpy, sys",
+RegenCooling/GeomClass.py,231,"matplotlib, numpy",/chamber_contour.png
+RegenCooling/IsentropicRelations.py,69,"numpy, scipy",
+RegenCooling/MaterialLib.py,123,"matplotlib, numpy, scipy",
+RegenCooling/Output.py,101,"csv, numpy",/sim_data.csv
+RegenCooling/PlottingFunctions.py,124,"config, matplotlib, numpy",/sim_data.csv
+RegenCooling/PropLibrary.py,52,rocketcea,
+RegenCooling/RegenCooling.py,285,"SectionThermalSim, numpy, scipy, thermo",
+RegenCooling/run.py,46,"PlottingFunctions, RegenCooling, config",
+RegenCooling/SectionMesh.py,68,"config, fipy",
+RegenCooling/SectionThermalSim.py,248,"Output, SectionMesh, config, fipy, matplotlib, numpy, os",
+RegenCooling/UnitTests.py,132,"IsentropicRelations, Output, PlottingFunctions, SectionThermalSim, config, matplotlib, numpy, thermo",
+Reynold Number Calculator.py,68,numpy,
+Sensitivity Study Drag.py,438,"csv, matplotlib, numpy",mach_fixed_altitude_output.csv; comprehensive_sensitivity_2_panel.png
+sensitivity-study-trade-off.py,104,"matplotlib, numpy",
+SHM try.py,247,"math, matplotlib, numpy, pandas",
+Subsonic Drag Estimation Alex.py,150,"matplotlib, numpy",
+Subsonic Drag estimation.py,70,"matplotlib, numpy",
+Supersonic Drag Estimation 2.0.py,119,"matplotlib, numpy",
+Supersonic Drag Estimation Alex.py,133,"matplotlib, numpy",
+Tanks/__init__.py,0,,
+Tanks/Cryo_Optimisation.py,909,"CoolProp, __future__, argparse, dataclasses, numpy, scipy, sys, time, typing, warnings",best_tank_history.csv
+Tanks/CryogenicTanks.py,773,"CoolProp, matplotlib, numpy",
+Trade-offs/engtradeoff.py,229,numpy,
+Trade-offs/trade-off-fuselageskin.py,228,numpy,
+Trade-offs/trade-off-weight-cockpitskin.py,228,numpy,
+Trade-offs/trade-off-weights.py,308,"math, numpy",
+Transonic Drag Estimation.py,135,"matplotlib, numpy",
+turbojet_pycycle_wrapper.py,392,"contextlib, example_cycles, functools, numpy, openmdao, os, warnings",
+Variables.py,0,,
