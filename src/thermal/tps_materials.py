@@ -188,6 +188,39 @@ MATERIALS = {
             "Excellent high-temperature capability."
     },
 
+    "IMI_Effective": {
+
+        "type": "Integrated Multilayer Insulation",
+
+        "density": 80,
+
+        "thermal_conductivity": 0.010,
+
+        "specific_heat": 1000,
+
+        "emissivity": 0.30,
+
+        "max_service_temp": 1400,
+
+        "youngs_modulus": None,
+
+        "poisson_ratio": None,
+
+        "thermal_expansion": None,
+
+        "yield_strength": None,
+
+        "creep_temp_limit": None,
+
+        "notes":
+            "Effective-property representation of a high-temperature "
+            "Integrated Multilayer Insulation (IMI) system. "
+            "Represents combined radiation-shield and fibrous-layer "
+            "performance for conceptual hypersonic TPS sizing. "
+            "Thermal conductivity is an equivalent through-thickness "
+            "value intended for 1D thermal analysis."
+    },
+
 
     "C_C_CMC": {
 
