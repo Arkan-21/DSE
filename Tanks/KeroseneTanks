@@ -3,7 +3,7 @@ from CryogenicTanks import TankStructure
 
 class KeroseneTank(TankStructure):
 
-    kerosene_mass    = 39561   # kg
+    kerosene_mass    = 39561       # kg
     kerosene_density = 70.85       # kg/m^3
     kerosene_volume  = kerosene_mass / kerosene_density  # m³
 
@@ -41,14 +41,13 @@ class KeroseneTank(TankStructure):
         return s.V_total, s.m_tank
 
     def tank_mass_options(self):
-        # Candidate discrete stage diameters (largest → smallest)
-        x= 3.5
-        stage_diameters = [x,  x/1.5, x/4, x/6, x/8]
-        possible_lengths = np.arange(0.2, 25.1, 0.1)
+        x = 2.5
+        stage_diameters = [x, x/2, x/4, x/6, x/8]
+        possible_lengths = np.arange(0.2, 60, 0.1)
 
-        min_mass   = np.inf
-        best_d     = None
-        best_L     = None
+        min_mass    = np.inf
+        best_d      = None
+        best_L      = None
         best_layout = None
 
         for d in stage_diameters:
@@ -56,25 +55,27 @@ class KeroseneTank(TankStructure):
                 layout         = []
                 total_mass     = 0.0
                 remaining_vol  = self.kerosene_volume
+                primary_placed = False
 
                 for stage_d in stage_diameters:
                     if stage_d > d:
-                        # Don't use stages larger than the primary tank
                         continue
                     if remaining_vol <= 0:
                         break
 
                     tank_vol, tank_mass = self._make_tank(stage_d, L)
-
                     if tank_vol <= 0:
                         continue
 
-                    # How many of this tank size do we need?
-                    n_tanks = max(1, int(np.floor(remaining_vol / tank_vol)))
+                    if not primary_placed:
+                        n_tanks = 1
+                        primary_placed = True
+                    else:
+                        n_tanks = min(2, max(1, int(np.floor(remaining_vol / tank_vol))))
 
-                    used_vol    = n_tanks * tank_vol
+                    used_vol       = n_tanks * tank_vol
                     remaining_vol -= used_vol
-                    total_mass  += n_tanks * tank_mass
+                    total_mass    += n_tanks * tank_mass
 
                     layout.append({
                         "diameter": stage_d,
@@ -84,19 +85,26 @@ class KeroseneTank(TankStructure):
                         "m_each":   tank_mass,
                     })
 
-                # Handle leftover volume: add one small top-up tank
+                # Top-up tank for any leftover volume
                 if remaining_vol > 0:
-                    # Use the smallest available stage diameter for the top-up
                     smallest_d = stage_diameters[-1]
                     _, tank_mass_topup = self._make_tank(smallest_d, L)
-                    total_mass += tank_mass_topup   # 1 extra tank (slight overfill)
+                    total_mass += tank_mass_topup
                     layout.append({
                         "diameter": smallest_d,
                         "length":   L,
                         "n_tanks":  1,
-                        "v_each":   None,   # partial fill
+                        "v_each":   None,
                         "m_each":   tank_mass_topup,
                     })
+
+                # Only consider layouts that actually cover the required volume
+                covered_vol = sum(
+                    s["n_tanks"] * s["v_each"]
+                    for s in layout if s["v_each"] is not None
+                )
+                if covered_vol < self.kerosene_volume:
+                    continue  # skip — doesn't cover required volume
 
                 if total_mass < min_mass:
                     min_mass    = total_mass
@@ -119,8 +127,9 @@ class KeroseneTank(TankStructure):
                 f"V_each={v_str}, "
                 f"m_each={stage['m_each']:.2f} kg"
             )
+
         total_vol = sum(
-            (s["n_tanks"] * s["v_each"])
+            s["n_tanks"] * s["v_each"]
             for s in best_layout if s["v_each"] is not None
         )
         print(f"\n  Target volume : {self.kerosene_volume:.3f} m³")
@@ -130,8 +139,8 @@ class KeroseneTank(TankStructure):
 
 if __name__ == "__main__":
     kerosene_tank = KeroseneTank(
-        d                   = 2.5,
-        L_cyl               = 10,
+        d                   = 7,
+        L_cyl               = 500,
         delta_P_max         = 1e5,
         delta_P_operational = 1e5,
         ins_thickness       = 0.05,
@@ -139,3 +148,4 @@ if __name__ == "__main__":
         k_ins               = 0.03,
     )
     kerosene_tank.tank_mass_options()
+    kerosene_tank.structure.summary()
