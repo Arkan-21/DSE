@@ -27,8 +27,12 @@ def optimum_total_turn_angle(M_inf: float, n: int) -> float:
     Prandtl-Meyer optimum total turning angle nu (degrees) - Eq. (1).
     Returns the maximum isentropic deflection for M_inf.
     """
-    total_turn_local = 0.6687 * M_inf **3 - 8.4697 * M_inf**2 + 36.463 * M_inf - 28.726 
-
+    if n == 2:
+        total_turn_local = 0.6687 * M_inf **3 - 8.4697 * M_inf**2 + 36.463 * M_inf - 28.726 
+    if n == 3:
+        total_turn_local = 0.6768*M_inf**3 - 9.8723*M_inf**2 + 49.076*M_inf - 43.845
+    else:
+        raise ValueError("Optimum total turn angle is only defined for n=2 or n=3 ramps.")
     return total_turn_local
 
 
@@ -348,24 +352,24 @@ def parametric_sweep(M_inf: float, n: int,
 
 if __name__ == "__main__":
 
-    #print("\n[1]  Design point from paper: M=3, 2 ramps, Oswatitsch criterion")
-    #analyse_intake(M_inf=3.0, n=2)
+    print("\n[1]  Design point from paper: M=3, 2 ramps, Oswatitsch criterion")
+    analyse_intake(M_inf=3.0, n=2)
 
     print("\n[2]  Paper optimal ramp angles: theta1=9 deg, theta2=14 deg  (M=3)")
     analyse_intake(M_inf=3.0, n=2, thetas_override=[9.0, 14.0])
 
-    # print("\n[3]  Equal-angle comparison case: theta1=11 deg, theta2=11 deg  (M=3)")
-    # print("     Note: the paper's 22+23 case exceeds the shock detachment limit")
-    # print("     at the second ramp (max theta ~20.9 deg at M~1.89).")
-    # print("     Using 11+11 as a valid equal-angle baseline instead.")
-    # analyse_intake(M_inf=3.0, n=2, thetas_override=[11.0, 11.0])
+    print("\n[3]  Equal-angle comparison case: theta1=11 deg, theta2=11 deg  (M=3)")
+    print("     Note: the paper's 22+23 case exceeds the shock detachment limit")
+    print("     at the second ramp (max theta ~20.9 deg at M~1.89).")
+    print("     Using 11+11 as a valid equal-angle baseline instead.")
+    analyse_intake(M_inf=3.0, n=2, thetas_override=[11.0, 11.0])
 
-    # print("\n[4]  M=4, 3 ramps, Oswatitsch criterion")
-    # analyse_intake(M_inf=4.0, n=3)
+    print("\n[4]  M=4, 3 ramps, Oswatitsch criterion")
+    analyse_intake(M_inf=4.0, n=3)
 
-    # print("\n[5]  Parametric sweep: theta1 in [5,15 deg], theta2 in [10,20 deg]")
-    # parametric_sweep(M_inf=3.0, n=2,
-    #                  theta1_range=(5, 15),
-    #                  theta2_range=(10, 20),
-    #                  step=1.0)
+    print("\n[5]  Parametric sweep: theta1 in [5,15 deg], theta2 in [10,20 deg]")
+    parametric_sweep(M_inf=3.0, n=2,
+                     theta1_range=(5, 15),
+                     theta2_range=(10, 20),
+                     step=1.0)
     
