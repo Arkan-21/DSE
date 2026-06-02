@@ -29,7 +29,7 @@ def optimum_total_turn_angle(M_inf: float, n: int) -> float:
     """
     if n == 2:
         total_turn_local = 0.6687 * M_inf **3 - 8.4697 * M_inf**2 + 36.463 * M_inf - 28.726 
-    if n == 3:
+    elif n == 3:
         total_turn_local = 0.6768*M_inf**3 - 9.8723*M_inf**2 + 49.076*M_inf - 43.845
     else:
         raise ValueError("Optimum total turn angle is only defined for n=2 or n=3 ramps.")
@@ -102,6 +102,23 @@ def stagnation_pressure_ratio(Mn: float) -> float:
     term2 = ((g + 1.0) / (2.0 * g * Mn**2 - (g - 1.0))) ** (1.0 / (g - 1.0))
     return term1 * term2
 
+def theta_from_beta_M(beta_deg: float, M: float) -> float:
+    """
+    Compute flow deflection angle theta [deg]
+    from shock angle beta [deg] and upstream Mach number M.
+
+    Uses the theta-beta-M relation directly.
+    """
+    g = GAMMA
+    beta = np.radians(beta_deg)
+
+    tan_theta = (
+        2.0 / np.tan(beta)
+        * (M**2 * np.sin(beta)**2 - 1.0)
+        / (M**2 * (g + np.cos(2.0 * beta)) + 2.0)
+    )
+
+    return np.degrees(np.arctan(tan_theta))
 
 # ---------------------------------------------------------------------------
 # Oswatitsch equal-shock-strength distribution
@@ -165,7 +182,7 @@ def oswatitsch_deflections(M_inf: float, n: int) -> list:
         thetas = [nu_total / n] * n
     return thetas
 
-print(oswatitsch_deflections(3.0, 2))
+
 
 # ---------------------------------------------------------------------------
 # Reflected shock estimate (Eq. 6)
@@ -241,31 +258,74 @@ def analyse_intake(M_inf: float, n: int,
         total_P0_ratio *= P0_ratio
         M_current = M_next
 
-    # --- Final normal shock at cowl lip ---
-    M_before_ns = M_current
-    P0_ns       = stagnation_pressure_ratio(M_before_ns)
-    g           = GAMMA
-    M_after_ns  = np.sqrt(
-        ((g - 1.0) * M_before_ns**2 + 2.0) /
-        (2.0 * g * M_before_ns**2 - (g - 1.0))
-    )
-    total_P0_ratio *= P0_ns
+    # # --- Final normal shock at cowl lip ---
+    # M_before_ns = M_current
+    # P0_ns       = stagnation_pressure_ratio(M_before_ns)
+    # g           = GAMMA
+    # M_after_ns  = np.sqrt(
+    #     ((g - 1.0) * M_before_ns**2 + 2.0) /
+    #     (2.0 * g * M_before_ns**2 - (g - 1.0))
+    # )
+    # total_P0_ratio *= P0_ns
 
-    stages.append({
-        "stage":     "Normal shock",
-        "M_in":      M_before_ns,
-        "theta_deg": 90.0,
-        "beta_deg":  90.0,
-        "Mn":        M_before_ns,
-        "M_out":     M_after_ns,
-        "P0_ratio":  P0_ns,
-    })
+    # stages.append({
+    #     "stage":     "Normal shock",
+    #     "M_in":      M_before_ns,
+    #     "theta_deg": 90.0,
+    #     "beta_deg":  90.0,
+    #     "Mn":        M_before_ns,
+    #     "M_out":     M_after_ns,
+    #     "P0_ratio":  P0_ns,
+    # })
+
+    beta1 = stages[0]["beta_deg"]
+    beta2 = stages[1]["beta_deg"]
+
 
     # --- Reflected shock angle ---
-    betas_oblique  = [s["beta_deg"]  for s in stages[:-1]]
-    thetas_oblique = [s["theta_deg"] for s in stages[:-1]]
+    betas_oblique  = [s["beta_deg"]  for s in stages]
+    thetas_oblique = [s["theta_deg"] for s in stages]
     beta_ref       = reflected_shock_angle(betas_oblique, thetas_oblique,
                                            delta_cowl)
+
+    L_1 = 1.0
+    L_2 = 1.0
+
+    x_c = L_1 * (np.tan(np.radians(thetas[0]))-np.tan(np.radians(thetas[0]+beta2)))/ (np.tan(np.radians(beta1)) - np.tan(np.radians(thetas[0]+beta2)))
+    y_c = x_c * np.tan(np.radians(beta1))
+    
+    y_2 = L_1 * np.tan(np.radians(thetas[0])) +L_2 * np.tan(np.radians(thetas[0]+thetas[1]))
+    x_2 = L_1 + L_2
+
+    psi = np.degrees(
+    np.arctan2(
+        y_c - y_2,
+        x_c - x_2
+    )
+
+
+)
+
+
+    M_before_rs = M_current
+    M_before_rs_normal = normal_mach(M_before_rs, beta_ref)
+    P0_rs       = stagnation_pressure_ratio(M_before_rs_normal)
+    theta_rs     = theta_from_beta_M(beta_ref, M_before_rs)
+    M_after_rs  = post_oblique_mach(M_before_rs, beta_ref, theta_rs)  # theta=0 for reflected shock
+
+
+    total_P0_ratio *= P0_rs
+
+    stages.append({
+        "stage":     "Reflected shock",
+        "M_in":      M_before_rs,
+        "theta_deg": theta_rs,
+        "beta_deg":  beta_ref,
+        "Mn":        M_before_rs_normal,
+        "M_out":     M_after_rs,
+        "P0_ratio":  P0_rs,
+    })
+
 
     results = {
         "M_inf":              M_inf,
@@ -274,7 +334,7 @@ def analyse_intake(M_inf: float, n: int,
         "total_deflection":   sum(thetas),
         "stages":             stages,
         "total_P0_recovery":  total_P0_ratio,
-        "M_exit":             M_after_ns,
+        "M_exit":             M_after_rs,
         "beta_reflected_deg": beta_ref,
     }
 
@@ -297,7 +357,7 @@ def analyse_intake(M_inf: float, n: int,
                   f"{s['P0_ratio']:>10.6f}")
         print("  " + "-" * 61)
         print(f"  {'TOTAL P0 recovery':<40} {total_P0_ratio:>10.6f}")
-        print(f"  {'Exit Mach (into subsonic diffuser)':<40} {M_after_ns:>10.4f}")
+        print(f"  {'Exit Mach (into subsonic diffuser)':<40} {M_after_rs:>10.4f}")
         print(f"  {'Reflected shock angle beta_s (Eq.6)':<40} {beta_ref:>9.2f} deg")
         print("=" * 65)
 
@@ -352,24 +412,24 @@ def parametric_sweep(M_inf: float, n: int,
 
 if __name__ == "__main__":
 
-    print("\n[1]  Design point from paper: M=3, 2 ramps, Oswatitsch criterion")
-    analyse_intake(M_inf=3.0, n=2)
+    # print("\n[1]  Design point from paper: M=3, 2 ramps, Oswatitsch criterion")
+    # analyse_intake(M_inf=3.0, n=2)
 
     print("\n[2]  Paper optimal ramp angles: theta1=9 deg, theta2=14 deg  (M=3)")
-    analyse_intake(M_inf=3.0, n=2, thetas_override=[9.0, 14.0])
+    analyse_intake(M_inf=3.0, n=2, thetas_override=[9.0, 14.0], delta_cowl=10)
 
-    print("\n[3]  Equal-angle comparison case: theta1=11 deg, theta2=11 deg  (M=3)")
-    print("     Note: the paper's 22+23 case exceeds the shock detachment limit")
-    print("     at the second ramp (max theta ~20.9 deg at M~1.89).")
-    print("     Using 11+11 as a valid equal-angle baseline instead.")
-    analyse_intake(M_inf=3.0, n=2, thetas_override=[11.0, 11.0])
+    # print("\n[3]  Equal-angle comparison case: theta1=11 deg, theta2=11 deg  (M=3)")
+    # print("     Note: the paper's 22+23 case exceeds the shock detachment limit")
+    # print("     at the second ramp (max theta ~20.9 deg at M~1.89).")
+    # print("     Using 11+11 as a valid equal-angle baseline instead.")
+    # analyse_intake(M_inf=3.0, n=2, thetas_override=[11.0, 11.0])
 
-    print("\n[4]  M=4, 3 ramps, Oswatitsch criterion")
-    analyse_intake(M_inf=4.0, n=3)
+    # print("\n[4]  M=4, 3 ramps, Oswatitsch criterion")
+    # analyse_intake(M_inf=4.0, n=3)
 
-    print("\n[5]  Parametric sweep: theta1 in [5,15 deg], theta2 in [10,20 deg]")
-    parametric_sweep(M_inf=3.0, n=2,
-                     theta1_range=(5, 15),
-                     theta2_range=(10, 20),
-                     step=1.0)
+    # print("\n[5]  Parametric sweep: theta1 in [5,15 deg], theta2 in [10,20 deg]")
+    # parametric_sweep(M_inf=3.0, n=2,
+    #                  theta1_range=(5, 15),
+    #                  theta2_range=(10, 20),
+    #                  step=1.0)
     
