@@ -1144,7 +1144,7 @@ def optimise_intake(
     L1_range=(0.2, 2.0),
     theta1_range=(1.0, 20.0),
     L1_step=0.02,
-    theta1_step=0.25,
+    theta1_step=1,
     M_exit_max=1.5,
     print_all=False,
 ):
@@ -1271,11 +1271,25 @@ def parametric_sweep(M_inf: float, n: int,
 
 if __name__ == "__main__":
 
+    """
+    Results of the paper with M_inf = 3, L_1 = 0.016, theta_1 = 9 deg, y_cowl = 0.01366, delta_cowl = 4 deg.
+    x_cowl = 0.0274 just like in the paper 
+   
+    Stage                M_in   theta    beta     Mn   M_out   P0 ratio
+    ---------------------------------------------------------------
+    Ramp 1             3.0000    9.00   26.49 1.3379  2.5541   0.972249
+    Ramp 2             2.5541   14.02   35.26 1.4746  1.9599   0.937637
+    Reflected shock    1.9599   19.02   52.88 1.5628  1.2204   0.908726
+    ---------------------------------------------------------------
+    TOTAL P0 recovery                              0.828410
+    Exit Mach (after reflected shock)                1.2204
 
-    print("\n[1]  Paper optimal ramp angles  (M=3)")
-    analyse_intake4(M_inf=3.0, theta_1_deg= 10, L_1= 1.4, y_cowl=1.3, delta_cowl_deg=4    )
-    
-    # best = optimise_intake(M_inf=3.0, y_cowl=1.3, delta_cowl_deg=4, L1_range=(0.2, 2.0), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=1.35)
+    """
+    print("\n[1]  Results of the paper for optimal ramp angles  (M=3)")
+    analyse_intake4(M_inf=3, theta_1_deg= 9, L_1= 0.016, y_cowl=0.01366, delta_cowl_deg=4    )
+
+   
+    # best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=1.4, L1_step=0.005)
     # print("\nBest configuration")
     # print("------------------")
     # print(f"L1      = {best['L_1']:.4f}")
@@ -1285,8 +1299,9 @@ if __name__ == "__main__":
     # print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
     # print(f"M_exit  = {best['M_exit']:.4f}")
 
-    
-    
+    """
+    ==========================================================================================
+    """
     
     
     
