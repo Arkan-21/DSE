@@ -1546,26 +1546,26 @@ if __name__ == "__main__":
 
     # ── Configure here ───────────────────────────────────────────────────────
     geom = Geometry(
-        A0  = 6.0,      # Inlet capture area                      [m²]
+        A0  = 8.0,      # Inlet capture area                      [m²]
         # Section lengths
         L01 = 0.60,     # Inlet / compression ramp                [m]
         L12 = 0.15,     # Isolator duct                           [m]
         L23 = 0.30,     # Diverging combustor                     [m]
         L34 = 0.15,     # Constant-area combustor                 [m]
         L45 = 0.40,     # Nozzle convergent                       [m]
-        L56 = 1.20,     # Nozzle divergent                        [m]
+        L56 = 1.2,     # Nozzle divergent                        [m]
         # Station areas (A1 and A5/throat computed at run-time)
-        A2  = 0.51,     # Isolator exit                           [m²]
-        A3  = 0.65,     # Diverging combustor exit                [m²]
-        A4  = 0.65,     # Constant-area combustor exit (= A3)     [m²]
+        A2  = 1.1423,     # Isolator exit                           [m²]
+        A3  = 2,     # Diverging combustor exit                [m²]
+        A4  = 2,     # Constant-area combustor exit (= A3)     [m²]
         A6  = 16.0,     # Nozzle exit                             [m²]
     )
 
     assump = Assumptions(
         h0           = 30_000.0,  # Altitude                      [m]
-        Ma0          = 6.0,       # Flight Mach number            [—]
+        Ma0          = 5,       # Flight Mach number            [—]
         phi          = 0.5,       # Equivalence ratio             [—]
-        theta        = 90.0,      # Injection angle               [deg]
+        theta        = 0.0,      # Injection angle               [deg]
         mixing_coeff = 0.176,     # η curve coefficient           [—]
         Ma_COMB      = 0.30,      # Combustor-inlet Mach          [—]
         Cf           = 0.003,     # Skin-friction coefficient     [—]
