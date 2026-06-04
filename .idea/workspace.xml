@@ -5,6 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="a4510b50-6521-4603-8524-c893232b9bab" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/DSE.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/DSE.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/thermal/Tempsolver_wing.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/Tempsolver_wing.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/thermal/tps_materials.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/tps_materials.py" afterDir="false" />
@@ -24,18 +25,42 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;iiTangoDown&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/Arkan-21/DSE.git&quot;,
+    &quot;accountId&quot;: &quot;074e0cdd-c879-4d20-a7a6-b88524daeee3&quot;
+  }
+}</component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.Heatsolver_Fuselage (1).executor": "Run",
-    "Python.Heatsolver_Fuselage.executor": "Run",
-    "Python.Tempsolver_wing.executor": "Run",
-    "git-widget-placeholder": "main"
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 8
+}</component>
+  <component name="ProjectId" id="3Ea23IlAReW3t9YEsYZWV9vbRaw" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.Heatsolver_Fuselage (1).executor&quot;: &quot;Run&quot;,
+    &quot;Python.Heatsolver_Fuselage.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Tempsolver_wing.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="C:\Users\chiel\PycharmProjects\DSE\src\thermal" />
@@ -119,7 +144,21 @@
       </list>
     </recent_temporary>
   </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-2653e85de345-6d6dccd035ac-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.31033.139" />
+      </set>
+    </attachedChunks>
+  </component>
   <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="a4510b50-6521-4603-8524-c893232b9bab" name="Changes" comment="" />
+      <created>1780402161650</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1780402161650</updated>
+    </task>
     <servers />
   </component>
 </project>
