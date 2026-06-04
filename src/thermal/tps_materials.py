@@ -38,11 +38,11 @@ MATERIALS = {
 
         "density": 4430,
 
-        "thermal_conductivity": 6.7,
+        "thermal_conductivity": 7.187,
 
-        "specific_heat": 560,
+        "specific_heat": 522.6,
 
-        "emissivity": 0.60,
+        "emissivity": 0,
 
         "max_service_temp": 873,
 
@@ -222,17 +222,17 @@ MATERIALS = {
     },
 
 
-    "C_C_CMC": {
+    "CVI-C/SiC": {
 
         "type": "Carbon-Carbon Composite",
 
-        "density": 1750,
+        "density": 2100,
 
-        "thermal_conductivity": 25.0,
+        "thermal_conductivity": 7,
 
-        "specific_heat": 710,
+        "specific_heat": 750,
 
-        "emissivity": 0.85,
+        "emissivity": 0.76,
 
         "max_service_temp": 2500,
 
