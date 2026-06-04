@@ -1289,7 +1289,24 @@ if __name__ == "__main__":
     analyse_intake4(M_inf=3, theta_1_deg= 9, L_1= 0.016, y_cowl=0.01366, delta_cowl_deg=4    )
 
    
-    # best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=1.4, L1_step=0.005)
+    best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=1.4, L1_step=0.005)
+    print("\nBest configuration")
+    print("------------------")
+    print(f"L1      = {best['L_1']:.4f}")
+    print(f"L2      = {best['L_2']:.4f}")
+    print(f"theta1  = {best['theta_1_deg']:.2f} deg")
+    print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
+    print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
+    print(f"M_exit  = {best['M_exit']:.4f}")
+
+    """
+    ==========================================================================================
+    """
+    
+    # print("\n[2]  Results for our case (M=5)")
+    # analyse_intake4(M_inf=5, theta_1_deg= 13, L_1= 2.16, y_cowl=1.197, delta_cowl_deg=4    )
+    
+    # best = optimise_intake(M_inf=5.0, y_cowl= 1.1968, delta_cowl_deg=0, L1_range=(0.1, 5), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=1.5, L1_step=0.01)
     # print("\nBest configuration")
     # print("------------------")
     # print(f"L1      = {best['L_1']:.4f}")
@@ -1298,13 +1315,11 @@ if __name__ == "__main__":
     # print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
     # print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
     # print(f"M_exit  = {best['M_exit']:.4f}")
-
+    
     """
     ==========================================================================================
     """
-    
-    
-    
+
     # print("\n[1]  Design point from paper: M=3, 2 ramps, Oswatitsch criterion")
     # analyse_intake(M_inf=3.0, n=2)
     
