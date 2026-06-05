@@ -1546,9 +1546,9 @@ if __name__ == "__main__":
 
     # ── Configure here ───────────────────────────────────────────────────────
     geom = Geometry(
-        A0  = 8.0,      # Inlet capture area                      [m²]
+        A0  = 4.5,      # Inlet capture area                      [m²]
         # Section lengths
-        L01 = 0.60,     # Inlet / compression ramp                [m]
+        L01 = 3,     # Inlet / compression ramp                [m]
         L12 = 0.15,     # Isolator duct                           [m]
         L23 = 0.30,     # Diverging combustor                     [m]
         L34 = 0.15,     # Constant-area combustor                 [m]
@@ -1558,7 +1558,7 @@ if __name__ == "__main__":
         A2  = 1.1423,     # Isolator exit                           [m²]
         A3  = 2,     # Diverging combustor exit                [m²]
         A4  = 2,     # Constant-area combustor exit (= A3)     [m²]
-        A6  = 16.0,     # Nozzle exit                             [m²]
+        A6  = 9,     # Nozzle exit                             [m²]
     )
 
     assump = Assumptions(

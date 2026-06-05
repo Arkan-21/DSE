@@ -5,14 +5,8 @@ from matplotlib.colorbar import ColorbarBase
 from Intake_ramjet import analyse_intake4
 
 
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.colorbar import ColorbarBase
-from Intake_ramjet import analyse_intake4
 
-
-def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor=2.0):
+def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor=2.0, delta_iso = 0.0):
     theta1 = results["theta_1_deg"]
     theta2 = results["theta_2_deg"]
     delta_cowl = results["delta_cowl_deg"]
@@ -29,6 +23,8 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     t1 = np.radians(theta1)
     t12 = np.radians(theta1 + theta2)
     tcowl = np.radians(delta_cowl)
+    tiso = np.radians(delta_iso)
+    x_ns = None
 
     O = np.array([0.0, 0.0])
     P1 = np.array([L1, -L1 * np.tan(t1) * flip * stretch_factor])
@@ -47,7 +43,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
 
     x_start = -0.35 * (L1 + L2)
     x_cowl_end = P2[0] + max(1.5 * L2, 0.4 * len(stages) * L2)
-
+    
     def get_cowl_y(x):
         if x < C[0]:
             return C[1]
@@ -67,7 +63,25 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
             t = (x - P1[0]) / (P2[0] - P1[0])
             return P1[1] + t * (P2[1] - P1[1])
         else:
-            return P2[1]
+
+            y_base = P2[1]
+
+            if x_ns is not None and x > x_ns:
+
+                dx = x - x_ns
+
+                if not mirror:
+                    return (
+                    y_base
+                    - dx * np.tan(tiso) * stretch_factor
+                    )
+                else:
+                    return (
+                    y_base
+                    + dx * np.tan(tiso) * stretch_factor
+                        )
+
+            return y_base
 
     def line_intersection(p1, p2, p3, p4):
         denom = (p4[1] - p3[1]) * (p2[0] - p1[0]) - (p4[0] - p3[0]) * (p2[1] - p1[1])
@@ -110,16 +124,22 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
         return np.array([x_start_ray + 0.1, y_start_ray])
 
     fig, (ax, ax_cbar) = plt.subplots(1, 2, figsize=figsize, gridspec_kw={'width_ratios': [25, 1]})
+    #colors = ["#1976d2", "#388e3c", "#fbc02d", "#d32f2f"]
+    #cmap = mcolors.LinearSegmentedColormap.from_list("mach_gradient", colors, N=256)
     colors = ["#1976d2", "#388e3c", "#fbc02d", "#d32f2f"]
-    cmap = mcolors.LinearSegmentedColormap.from_list("mach_gradient", colors, N=256)
+    cmap = mcolors.LinearSegmentedColormap.from_list("mach_gradient",colors,N=256)
+    #cmap = plt.get_cmap("turbo")
+    #cmap = plt.get_cmap("viridis")
+    #cmap = plt.get_cmap("plasma")
+    #cmap = plt.get_cmap("jet")
 
     all_machs = [M_inf] + [s["M_in"] for s in stages] + [stages[-1]["M_out"]]
     norm = mcolors.Normalize(vmin=min(all_machs), vmax=max(all_machs))
     ax.set_facecolor("#e0e0e0")
 
     y_ambient_far = (y_geom_max + 1.5 * s_factor) if mirror else (y_geom_min - 1.5 * s_factor)
-    y_top_limit = (y_geom_min - 0.5 * s_factor) if mirror else (y_geom_max + 0.5 * s_factor)
-    y_bot_limit = (y_geom_max + 0.5 * s_factor) if mirror else (y_geom_min - 0.5 * s_factor)
+    y_top_limit = (y_geom_min - 0.1 * s_factor) if mirror else (y_geom_max + 0.1 * s_factor)
+    y_bot_limit = (y_geom_max + 0.4 * s_factor) if mirror else (y_geom_min - 0.4 * s_factor)
 
     region_inf = np.array([[x_start, O[1]], O, C, [x_cowl_end, C[1]], [x_cowl_end, y_ambient_far], [x_start, y_ambient_far]])
     ax.fill(region_inf[:, 0], region_inf[:, 1], color=cmap(norm(M_inf)), zorder=1)
@@ -140,7 +160,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     last_top_vertex = C.copy()
 
     bouncing_up = True
-    x_ns = None
+    
 
     # Reflected shock 1 (C -> P2) is already drawn above, so start the bounce
     # loop at the SECOND reflection (stages[3:]).
@@ -166,12 +186,13 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
 
             x_steps = np.linspace(x_ns, x_cowl_end, 100)
             top_wall_pts = [[x, get_cowl_y(x)] for x in x_steps]
-            bot_wall_pts = [[x, get_ramp_y(x)] for x in reversed(x_steps)]
+            bot_wall_pts = [[x, get_ramp_y(x)]for x in reversed(x_steps)]
             zone_subsonic = np.array(top_wall_pts + bot_wall_pts)
             ax.fill(zone_subsonic[:, 0], zone_subsonic[:, 1], color=cmap(norm(s["M_out"])), zorder=2)
             break
 
         else:
+            tiso = np.radians(delta_iso)
             if bouncing_up:
                 flow_dir = (theta1 + theta2) if not mirror else -(theta1 + theta2)
                 angle_ray = (flow_dir + beta) if mirror else (flow_dir - beta)
@@ -199,16 +220,44 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
                 last_bottom_vertex = next_vertex.copy()
                 bouncing_up = True
 
-    wall_lw = 5.5
-    wall_color = "#1a1a1a"
+    wall_lw = 3.0
+    wall_color = "#2b2b2b"
     x_wall_profile = np.linspace(x_start, x_cowl_end, 1000)
 
     ramp_y_profile = [get_ramp_y(x) for x in x_wall_profile]
     ax.plot(x_wall_profile, ramp_y_profile, color=wall_color, lw=wall_lw, zorder=5)
 
+    cowl_thickness = 0.005 * (L1 + L2)
+
     cowl_wall_x = x_wall_profile[x_wall_profile >= C[0]]
-    cowl_y_profile = [get_cowl_y(x) for x in cowl_wall_x]
-    ax.plot(cowl_wall_x, cowl_y_profile, color=wall_color, lw=wall_lw, zorder=5)
+    cowl_y_profile = np.array([get_cowl_y(x) for x in cowl_wall_x])
+
+    cowl_lower = cowl_y_profile + cowl_thickness * flip
+
+    ax.fill_between(
+    cowl_wall_x,
+    cowl_y_profile,
+    cowl_lower,
+    color="#505050",
+    zorder=5
+    )
+
+    ax.plot(
+    cowl_wall_x,
+    cowl_y_profile,
+    color="black",
+    lw=2.5,
+    zorder=6
+    )
+
+    ax.plot(
+    cowl_wall_x,
+    cowl_lower,
+    color="black",
+    lw=2.5,
+    zorder=6
+    )
+    
 
     for pt1, pt2 in shock_lines:
         if x_ns is not None:
@@ -218,25 +267,86 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
                 t = (x_ns - pt1[0]) / (pt2[0] - pt1[0])
                 pt2 = pt1 + t * (pt2 - pt1)
 
-        ax.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], color="#ffffff", linestyle="--", lw=2.5, zorder=10)
+        ax.plot(
+        [pt1[0], pt2[0]],
+        [pt1[1], pt2[1]],
+        color="white",
+        lw=4.5,
+        alpha=0.8,
+        zorder=9
+        )
+
+        ax.plot(
+        [pt1[0], pt2[0]],
+        [pt1[1], pt2[1]],
+        color="black",
+        linestyle="--",
+        lw=1.5,
+        zorder=10
+        )
 
     # Terminal normal shock: solid vertical line spanning the channel (the
     # truncation logic above intentionally skips it).
     if x_ns is not None:
-        ax.plot([x_ns, x_ns], [get_ramp_y(x_ns), get_cowl_y(x_ns)],
-                color="#ffffff", linestyle="-", lw=3.0, zorder=10)
+        ax.plot(
+        [x_ns, x_ns],
+        [get_ramp_y(x_ns), get_cowl_y(x_ns)],
+        color="white",
+        lw=5,
+        alpha=0.8,
+        zorder=9
+        )
 
-    ax.scatter(C[0], C[1], s=100, color=wall_color, edgecolors="white", linewidths=1.5, zorder=20)
+        ax.plot(
+        [x_ns, x_ns],
+        [get_ramp_y(x_ns), get_cowl_y(x_ns)],
+        color="black",
+        lw=2,
+        zorder=10
+        )
 
-    arrow_y = -0.6 * (y_c * stretch_factor) if not mirror else 0.6 * (y_c * stretch_factor)
-    ax.arrow(arrow_x := x_start + 0.25 * abs(x_start), arrow_y, abs(x_start) * 0.35, 0,
-             width=0.08 * s_factor, head_width=0.25 * s_factor, color="black", zorder=20)
-    ax.text(arrow_x + abs(x_start) * 0.05, -0.3 * (y_c * stretch_factor) if not mirror else 0.3 * (y_c * stretch_factor), "Flow", fontsize=14, weight="bold", zorder=25)
+    ax.scatter(C[0],C[1],s=140,color="#404040",edgecolors="white",linewidths=2.0,zorder=20)
+
+    flow_x0 = x_start + 0.8 * abs(x_start)
+    flow_x1 = x_start + 1.2 * abs(x_start)
+
+    flow_y = (
+    C[1] + 0.1 * (O[1] - C[1])
+    if not mirror
+    else
+    C[1] - 0.1 * (C[1] - O[1])
+    )
+
+    ax.annotate(
+    "",
+    xy=(flow_x1, flow_y),
+    xytext=(flow_x0, flow_y),
+    arrowprops=dict(
+        arrowstyle="-|>",
+        lw=2.5,
+        color="black",
+        shrinkA=0,
+        shrinkB=0,
+        mutation_scale=18,
+    ),
+    zorder=20
+    )
+    ax.text(
+    0.5 * (flow_x0 + flow_x1),
+    flow_y + 0.08 * s_factor * flip,
+    "Post Bow Shock Flow",
+    fontsize=12,
+    weight="bold",
+    ha="center",
+    va="bottom" if not mirror else "top",
+    color="black",
+    zorder=21,
+    )
 
     dim_color = "#333333"
-    line_y_offset = 0.15 * s_factor * flip
-    ext_y_offset = 0.25 * s_factor * flip
-    text_y_offset = 0.32 * s_factor * flip
+    line_y_offset = 0.08 * s_factor * flip
+    ext_y_offset = 0.12 * s_factor * flip
+    text_y_offset = 0.16 * s_factor * flip
 
     ax.plot([O[0], O[0]], [O[1], O[1] + ext_y_offset], color=dim_color, lw=1, alpha=0.5)
     ax.plot([P1[0], P1[0]], [P1[1], O[1] + ext_y_offset], color=dim_color, lw=1, alpha=0.5)
@@ -252,17 +362,61 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     ax.annotate('', xy=(dim_x_loc, O[1]), xytext=(dim_x_loc, C[1]), arrowprops=dict(arrowstyle='<->', color='black', lw=1.2))
     ax.text(dim_x_loc - (0.05 * abs(x_start)), C[1] / 2, f"$y_c$ = {y_c:.4f}", color='black', ha='right', va='center', fontsize=11, rotation=90)
 
+    L_iso = x_ns - P2[0]
+    if x_ns is not None:
+
+        ax.plot(
+        [x_ns, x_ns],
+        [get_ramp_y(x_ns), O[1] + ext_y_offset],
+        color=dim_color,
+        lw=1,
+        alpha=0.5
+        )
+
+        ax.annotate(
+        '',
+        xy=(P2[0], O[1] + line_y_offset),
+        xytext=(x_ns, O[1] + line_y_offset),
+        arrowprops=dict(
+            arrowstyle='<->',
+            color=dim_color,
+            lw=1
+            )
+        )
+
+        ax.text(
+        0.5 * (P2[0] + x_ns),
+        O[1] + text_y_offset,
+        rf"$L_{{iso}}$ = {x_ns - P2[0]:.4f}",
+        color=dim_color,
+        ha='center',
+        va='bottom' if not mirror else 'top',
+        fontsize=11,
+        weight='bold'
+    )
+
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
+
+    if x_ns is not None:
+        x_cowl_end = x_ns + 0.15 * (L1 + L2)
+
+   
 
     ax.set_xlim(x_start, x_cowl_end + 0.1 * (L1 + L2))
     ax.set_ylim(min(y_top_limit, y_bot_limit), max(y_top_limit, y_bot_limit))
 
     ax_cbar.clear()
     cbar = ColorbarBase(ax_cbar, cmap=cmap, norm=norm, orientation='vertical')
-    cbar.set_label('Mach Number ($M$)', color='black', fontsize=12, weight='bold', labelpad=10)
+    cbar.outline.set_linewidth(1.2)
+    cbar.outline.set_edgecolor("black")
+    cbar.set_label(
+    "Mach Number",
+    fontsize=12,
+    weight="bold"
+    )
 
     mach_ticks = sorted(list(set(all_machs)))
     cbar.set_ticks(mach_ticks)
@@ -276,12 +430,12 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
 if __name__ == "__main__":
     results = analyse_intake4(
         M_inf=4.35,
-        L_1=1.69,
+        L_1= 1.41,
         theta_1_deg=6,
-        y_cowl=1.1968,
+        y_cowl=1,
         delta_cowl_deg=4.0,
         verbose=False
     )
 
-    fig = draw_intake_cfd_style(results, mirror=True)
+    fig = draw_intake_cfd_style(results, mirror= False, delta_iso=-3)
     plt.show()

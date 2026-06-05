@@ -263,9 +263,9 @@ def draw_intake_cfd_style(results, figsize=(15,6), mirror=False):
 if __name__ == "__main__":
     results = analyse_intake4(
     M_inf=3,
-    L_1=1,
+    L_1=0.016,
     theta_1_deg=9,
-    y_cowl=1.1968,
+    y_cowl=0.01366,
     delta_cowl_deg=4.0,
     verbose=False
 )
