@@ -9,14 +9,14 @@ from thermal.tps_materials import MATERIALS
 
 layer_stack = [
     ("SiC_SiC_CMC", 0.004),
-    ("Aerogel",     0.030),
+    ("Aerogel",     0.020),
     ("Ti6Al4V",     0.002)
 ]
 
 wall_area = 400.0                 # m²
 
 
-dt = 0.005                      # s
+dt = 0.002                      # s
 
 initial_temperature = 295.0      # K
 
@@ -34,11 +34,11 @@ sigma = 5.670374419e-8
 # HEAT FLUX PROFILE INPUTS
 # =============================================================================
 
-peak_heat_flux = 40000.0      # [W/m²]
+peak_heat_flux = 27090    # [W/m²]
 
-ramp_up_time = 500         # [s]
-steady_time = 2500           # [s]
-ramp_down_time = 500       # [s]
+ramp_up_time = 1         # [s]
+steady_time = 3600           # [s]
+ramp_down_time = 1       # [s]
 post_cooling_time = 1
 
 # Total mission duration implied by profile

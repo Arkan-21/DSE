@@ -163,15 +163,15 @@ MATERIALS = {
 
         "type": "CMC",
 
-        "density": 2600,
+        "density": 2700,
 
-        "thermal_conductivity": 15.0,
+        "thermal_conductivity": 10.0,
 
         "specific_heat": 800,
 
-        "emissivity": 0.90,
+        "emissivity": 0.70,
 
-        "max_service_temp": 1900,
+        "max_service_temp": 1600,
 
         "youngs_modulus": None,
 
@@ -228,13 +228,13 @@ MATERIALS = {
 
         "density": 2100,
 
-        "thermal_conductivity": 7,
+        "thermal_conductivity": 10,
 
         "specific_heat": 750,
 
         "emissivity": 0.76,
 
-        "max_service_temp": 2500,
+        "max_service_temp": 1473,
 
         "youngs_modulus": None,
 
@@ -289,15 +289,15 @@ MATERIALS = {
 
         "type": "Aerogel Insulation",
 
-        "density": 120,
+        "density": 110,
 
-        "thermal_conductivity": 0.018,
+        "thermal_conductivity": 0.049,
 
-        "specific_heat": 1000,
+        "specific_heat": 900,
 
         "emissivity": 0.90,
 
-        "max_service_temp": 923,
+        "max_service_temp": 1000,
 
         "youngs_modulus": None,
 
