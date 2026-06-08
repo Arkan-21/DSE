@@ -1069,7 +1069,7 @@ class Ramjet:
         V0   = self._f(inp["V"])
 
         M1 = float(a.Ma_COMB)
-        sigma_c = self.pressure_recovery(Ma0); Pt1_target = sigma_c * Pt0
+        sigma_c = 0.61; Pt1_target = sigma_c * Pt0
 
         def residual(v):
             """
@@ -1549,25 +1549,25 @@ if __name__ == "__main__":
         A0  = 4.5,      # Inlet capture area                      [m²]
         # Section lengths
         L01 = 3,     # Inlet / compression ramp                [m]
-        L12 = 0.15,     # Isolator duct                           [m]
-        L23 = 0.30,     # Diverging combustor                     [m]
-        L34 = 0.15,     # Constant-area combustor                 [m]
-        L45 = 0.40,     # Nozzle convergent                       [m]
+        L12 = 1.2,     # Isolator duct                           [m]
+        L23 = 1.4,     # Diverging combustor                     [m]
+        L34 = 0.28,     # Constant-area combustor                 [m]
+        L45 = 0.35,     # Nozzle convergent                       [m]
         L56 = 1.2,     # Nozzle divergent                        [m]
         # Station areas (A1 and A5/throat computed at run-time)
-        A2  = 1.1423,     # Isolator exit                           [m²]
-        A3  = 2,     # Diverging combustor exit                [m²]
-        A4  = 2,     # Constant-area combustor exit (= A3)     [m²]
-        A6  = 9,     # Nozzle exit                             [m²]
+        A2  = 4.05,     # Isolator exit                           [m²]
+        A3  = 4.95,     # Diverging combustor exit                [m²]
+        A4  = 4.95 ,     # Constant-area combustor exit (= A3)     [m²]
+        A6  = 7.2,     # Nozzle exit                             [m²]
     )
 
     assump = Assumptions(
-        h0           = 30_000.0,  # Altitude                      [m]
-        Ma0          = 5,       # Flight Mach number            [—]
-        phi          = 0.5,       # Equivalence ratio             [—]
-        theta        = 0.0,      # Injection angle               [deg]
+        h0           = 29_300.0,  # Altitude                      [m]
+        Ma0          = 4.4,       # Flight Mach number            [—]
+        phi          = 0.7,       # Equivalence ratio             [—]
+        theta        = 0,      # Injection angle               [deg]
         mixing_coeff = 0.176,     # η curve coefficient           [—]
-        Ma_COMB      = 0.30,      # Combustor-inlet Mach          [—]
+        Ma_COMB      = 0.3,      # Combustor-inlet Mach          [—]
         Cf           = 0.003,     # Skin-friction coefficient     [—]
         HHV          = 141.8e6,   # H₂ higher heating value       [J/kg_fuel]
     )

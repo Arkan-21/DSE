@@ -3,13 +3,15 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colorbar import ColorbarBase
 from Intake_ramjet import analyse_intake4
+from scipy.optimize import brentq
 
 
 
-def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor=2.0, delta_iso = 0.0):
+def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor=1, delta_iso = 0.0, L_diffuser =1.0):
     theta1 = results["theta_1_deg"]
     theta2 = results["theta_2_deg"]
     delta_cowl = results["delta_cowl_deg"]
+    phi_ref = results["phi_ref1_deg"]
 
     L1 = results["L_1"]
     L2 = results["L_2"]
@@ -43,6 +45,13 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
 
     x_start = -0.35 * (L1 + L2)
     x_cowl_end = P2[0] + max(1.5 * L2, 0.4 * len(stages) * L2)
+
+    def area_mach(M, gamma=1.4):
+        return ( (1.0 / M)* ((2.0 / (gamma + 1.0))* (1.0 + (gamma - 1.0) / 2.0 * M**2)) ** ((gamma + 1.0) / (2.0 * (gamma - 1.0))))
+
+    def subsonic_mach_from_area_ratio(AAstar, gamma=1.4):
+        f = lambda M: area_mach(M, gamma) - AAstar
+        return brentq(f, 1e-6, 0.999999)
     
     def get_cowl_y(x):
         if x < C[0]:
@@ -134,7 +143,10 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     #cmap = plt.get_cmap("jet")
 
     all_machs = [M_inf] + [s["M_in"] for s in stages] + [stages[-1]["M_out"]]
-    norm = mcolors.Normalize(vmin=min(all_machs), vmax=max(all_machs))
+
+    diffuser_machs = []
+
+    norm = mcolors.Normalize(vmin=0.4, vmax=max(all_machs))
     ax.set_facecolor("#e0e0e0")
 
     y_ambient_far = (y_geom_max + 1.5 * s_factor) if mirror else (y_geom_min - 1.5 * s_factor)
@@ -164,62 +176,158 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
 
     # Reflected shock 1 (C -> P2) is already drawn above, so start the bounce
     # loop at the SECOND reflection (stages[3:]).
+    current_angle = phi_ref
     for s in stages[3:]:
-        m_in = s["M_in"]
-        beta = s["beta_deg"]
 
         if "Normal Shock" in s["stage"]:
-            # The terminal shock sits at the most-downstream impact point, i.e.
-            # the latest reflection on either wall.
+
             x_ns = max(last_top_vertex[0], last_bottom_vertex[0])
+            if x_ns is not None:
+                x_cowl_end = x_ns + L_diffuser
+
             v_top = np.array([x_ns, get_cowl_y(x_ns)])
             v_bot = np.array([x_ns, get_ramp_y(x_ns)])
 
             shock_lines.append((v_top, v_bot))
 
             if bouncing_up:
-                zone_inter = np.array([last_shock_vertex, last_top_vertex, v_top, v_bot, last_bottom_vertex])
+                zone_inter = np.array([
+                    last_shock_vertex,
+                    last_top_vertex,
+                    v_top,
+                    v_bot,
+                    last_bottom_vertex
+                ])
             else:
-                zone_inter = np.array([last_shock_vertex, last_bottom_vertex, v_bot, v_top, last_top_vertex])
+                zone_inter = np.array([
+                    last_shock_vertex,
+                    last_bottom_vertex,
+                    v_bot,
+                    v_top,
+                    last_top_vertex
+                ])
 
-            ax.fill(zone_inter[:, 0], zone_inter[:, 1], color=cmap(norm(m_in)), zorder=2)
+            ax.fill(
+                zone_inter[:, 0],
+                zone_inter[:, 1],
+                color=cmap(norm(s["M_in"])),
+                zorder=2
+            )
 
+            M_ns = s["M_out"]
             x_steps = np.linspace(x_ns, x_cowl_end, 100)
-            top_wall_pts = [[x, get_cowl_y(x)] for x in x_steps]
-            bot_wall_pts = [[x, get_ramp_y(x)]for x in reversed(x_steps)]
-            zone_subsonic = np.array(top_wall_pts + bot_wall_pts)
-            ax.fill(zone_subsonic[:, 0], zone_subsonic[:, 1], color=cmap(norm(s["M_out"])), zorder=2)
+
+            A0 = get_cowl_y(x_ns) - get_ramp_y(x_ns)
+
+            A0_Astar = area_mach(M_ns)
+
+            for i in range(len(x_steps)-1):
+                
+                xL = x_steps[i]
+                xR = x_steps[i+1]
+
+                AL = get_cowl_y(xL) - get_ramp_y(xL)
+                AR = get_cowl_y(xR) - get_ramp_y(xR)
+
+                AL_Astar = (AL / A0) * A0_Astar
+                AR_Astar = (AR / A0) * A0_Astar
+
+                ML = subsonic_mach_from_area_ratio(AL_Astar)
+                MR = subsonic_mach_from_area_ratio(AR_Astar)
+
+                if i == 0:
+                    print("M_start =", ML)
+
+                if i == len(x_steps)-2:
+                    print("M_end =", MR)
+                    
+                Mavg = 0.5 * (ML + MR)
+
+                poly = np.array([
+                    [xL, get_ramp_y(xL)],
+                    [xR, get_ramp_y(xR)],
+                    [xR, get_cowl_y(xR)],
+                    [xL, get_cowl_y(xL)]
+                ])
+
+                ax.fill(
+                    poly[:,0],
+                    poly[:,1],
+                    color=cmap(norm(Mavg)),
+                    zorder=2
+                )
+                diffuser_machs.append(Mavg)
+
             break
+            
+    # ----------------------------
+    # Reflected oblique shocks
+    # ----------------------------
+
+        if bouncing_up:
+
+            next_vertex = ray_intersect_walls(
+                last_bottom_vertex[0],
+                last_bottom_vertex[1],
+                current_angle,
+                target_wall="top"
+            )
+
+            zone_pts = np.array([
+                last_shock_vertex,
+                last_bottom_vertex,
+                next_vertex,
+                last_top_vertex
+            ])
+
+            ax.fill(
+                zone_pts[:, 0],
+                zone_pts[:, 1],
+                color=cmap(norm(s["M_in"])),
+                zorder=2
+            )
+
+            shock_lines.append(
+                (last_bottom_vertex.copy(), next_vertex.copy())
+            )
+
+            last_shock_vertex = last_bottom_vertex.copy()
+            last_top_vertex = next_vertex.copy()
+
+            bouncing_up = False
 
         else:
-            tiso = np.radians(delta_iso)
-            if bouncing_up:
-                flow_dir = (theta1 + theta2) if not mirror else -(theta1 + theta2)
-                angle_ray = (flow_dir + beta) if mirror else (flow_dir - beta)
 
-                next_vertex = ray_intersect_walls(last_bottom_vertex[0], last_bottom_vertex[1], angle_ray, target_wall="top")
+            next_vertex = ray_intersect_walls(
+                last_top_vertex[0],
+                last_top_vertex[1],
+                -current_angle,
+                target_wall="bottom"
+            )
 
-                zone_pts = np.array([last_shock_vertex, last_bottom_vertex, next_vertex, last_top_vertex])
-                ax.fill(zone_pts[:, 0], zone_pts[:, 1], color=cmap(norm(m_in)), zorder=2)
+            zone_pts = np.array([
+                last_shock_vertex,
+                last_top_vertex,
+                next_vertex,
+                last_bottom_vertex
+            ])
 
-                shock_lines.append((last_bottom_vertex.copy(), next_vertex.copy()))
-                last_shock_vertex = last_bottom_vertex.copy()
-                last_top_vertex = next_vertex.copy()
-                bouncing_up = False
-            else:
-                flow_dir = delta_cowl if not mirror else -delta_cowl
-                angle_ray = (flow_dir - beta) if mirror else (flow_dir + beta)
+            ax.fill(
+                zone_pts[:, 0],
+                zone_pts[:, 1],
+                color=cmap(norm(s["M_in"])),
+                zorder=2
+            )
 
-                next_vertex = ray_intersect_walls(last_top_vertex[0], last_top_vertex[1], angle_ray, target_wall="bottom")
+            shock_lines.append(
+                (last_top_vertex.copy(), next_vertex.copy())
+            )
 
-                zone_pts = np.array([last_shock_vertex, last_top_vertex, next_vertex, last_bottom_vertex])
-                ax.fill(zone_pts[:, 0], zone_pts[:, 1], color=cmap(norm(m_in)), zorder=2)
+            last_shock_vertex = last_top_vertex.copy()
+            last_bottom_vertex = next_vertex.copy()
 
-                shock_lines.append((last_top_vertex.copy(), next_vertex.copy()))
-                last_shock_vertex = last_top_vertex.copy()
-                last_bottom_vertex = next_vertex.copy()
-                bouncing_up = True
-
+            bouncing_up = True
+    all_machs.extend(diffuser_machs)
     wall_lw = 3.0
     wall_color = "#2b2b2b"
     x_wall_profile = np.linspace(x_start, x_cowl_end, 1000)
@@ -232,7 +340,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     cowl_wall_x = x_wall_profile[x_wall_profile >= C[0]]
     cowl_y_profile = np.array([get_cowl_y(x) for x in cowl_wall_x])
 
-    cowl_lower = cowl_y_profile + cowl_thickness * flip
+    cowl_lower = cowl_y_profile - cowl_thickness * flip
 
     ax.fill_between(
     cowl_wall_x,
@@ -399,13 +507,11 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
-
-    if x_ns is not None:
-        x_cowl_end = x_ns + 0.15 * (L1 + L2)
+   
 
    
 
-    ax.set_xlim(x_start, x_cowl_end + 0.1 * (L1 + L2))
+    ax.set_xlim(x_start, x_cowl_end)
     ax.set_ylim(min(y_top_limit, y_bot_limit), max(y_top_limit, y_bot_limit))
 
     ax_cbar.clear()
@@ -418,7 +524,9 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     weight="bold"
     )
 
-    mach_ticks = sorted(list(set(all_machs)))
+    mach_ticks = sorted(list(set(
+    [M_inf] + [s["M_in"] for s in stages[:-1]] + [stages[-1]["M_out"]]
+    ))) 
     cbar.set_ticks(mach_ticks)
     cbar.set_ticklabels([f"{val:.2f}" for val in mach_ticks])
     ax_cbar.tick_params(labelsize=10, colors='black')
@@ -429,13 +537,13 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
 
 if __name__ == "__main__":
     results = analyse_intake4(
-        M_inf=4.35,
-        L_1= 1.41,
-        theta_1_deg=6,
-        y_cowl=1,
-        delta_cowl_deg=4.0,
+        M_inf=3,
+        L_1= 0.016,
+        theta_1_deg=9,
+        y_cowl=0.01366,
+        delta_cowl_deg=4,
         verbose=False
     )
 
-    fig = draw_intake_cfd_style(results, mirror= False, delta_iso=-3)
+    fig = draw_intake_cfd_style(results, mirror= False, delta_iso=-3, L_diffuser=0.005)
     plt.show()

@@ -260,58 +260,79 @@ def analyse_intake4(
     current_M = M_4
     reflection_counter = 2
 
-    while True:
-        # Determine if an oblique shock is physically possible
-        th_max = check_detachment_limit(current_M)
-        
-        # Guard condition: If current Mach drops below 1 or cannot support deflection
-        if current_M <= 1.0 or theta_bounce >= th_max:
-            # Create Final Normal Shock wave stage
-            g = GAMMA
-            Mn_ns = current_M # For normal shocks, incoming Mach is entirely normal component
-            P0_rat_ns = stagnation_pressure_ratio(Mn_ns)
-            M_out_ns = np.sqrt((1.0 + (g - 1.0) / 2.0 * current_M**2) / (g * current_M**2 - (g - 1.0) / 2.0))
-            
-            stage_ns = {
-                "stage":     "Terminal Normal Shock",
-                "M_in":      current_M,
-                "theta_deg": 0.0,
-                "beta_deg":  90.0,
-                "Mn":        Mn_ns,
-                "M_out":     M_out_ns,
-                "P0_ratio":  P0_rat_ns,
-            }
-            stages.append(stage_ns)
-            current_M = M_out_ns
-            break
-        
-        # Calculate next oblique reflection properties
-        b_ref = theta_beta_M(theta_bounce, current_M)
+    # Preserve the shock angle from Reflected Shock 1
+    previous_beta = beta_ref
+
+    current_M = M_4
+
+    for reflection_counter in [2, 3]:
+
+        b_ref = beta_ref
+
+        theta_reflection = theta_from_beta_M(
+            b_ref,
+            current_M
+            )
+
         Mn_r = normal_mach(current_M, b_ref)
         P0_rat_r = stagnation_pressure_ratio(Mn_r)
-        M_next = post_oblique_mach(current_M, b_ref, theta_bounce)
-        
+
+        M_next = post_oblique_mach(
+            current_M,
+            b_ref,
+            theta_reflection
+        )
+
         stage_loop = {
             "stage":     f"Reflected shock {reflection_counter}",
             "M_in":      current_M,
-            "theta_deg": theta_bounce,
+            "theta_deg": theta_reflection,
             "beta_deg":  b_ref,
             "Mn":        Mn_r,
             "M_out":     M_next,
             "P0_ratio":  P0_rat_r,
         }
+
         stages.append(stage_loop)
-        
+
         current_M = M_next
-        reflection_counter += 1
+        
+    # ------------------------------------------------------------------
+    # 6. Terminal normal shock
+    # ------------------------------------------------------------------
+
+    g = GAMMA
+
+    Mn_ns = current_M
+
+    P0_rat_ns = stagnation_pressure_ratio(Mn_ns)
+
+    M_out_ns = np.sqrt(
+        (1.0 + (g - 1.0) / 2.0 * current_M**2)
+        / (g * current_M**2 - (g - 1.0) / 2.0)
+    )
+
+    stage_ns = {
+        "stage":     "Terminal Normal Shock",
+        "M_in":      current_M,
+        "theta_deg": 0.0,
+        "beta_deg": 90.0,
+        "Mn":        Mn_ns,
+        "M_out":     M_out_ns,
+        "P0_ratio":  P0_rat_ns,
+    }
+
+    stages.append(stage_ns)
+
+    current_M = M_out_ns
 
     # ------------------------------------------------------------------
-    # 6.  Totals
+    # 7.  Totals
     # ------------------------------------------------------------------
     total_P0 = np.prod([s["P0_ratio"] for s in stages])
 
     # ------------------------------------------------------------------
-    # 7.  Verbose output
+    # 8.  Verbose output
     # ------------------------------------------------------------------
     if verbose:
         print("=" * 75)
@@ -329,7 +350,7 @@ def analyse_intake4(
         print(f"    Cowl lip C      : ({x_c:.4f},  {y_cowl:.4f})")
         print(f"    Ramp-1 tip P1   : ({L_1:.4f},  {y_P1:.4f})")
         print(f"    beta_2 (local)  = {beta_2:.2f} deg  →  theta_2 = {theta_2:.2f} deg")
-        print(f"    Channel Bounce Theta = {theta_bounce:.2f} deg")
+        print(f"    Preserved reflection beta = {beta_ref:.2f} deg")
         print(f"    Landing point 1 : ({x_land:.4f},  {y_land:.4f})")
         print(f"    L_2 (computed)  = {L_2:.4f}")
         print()
@@ -366,6 +387,7 @@ def analyse_intake4(
         "stages":               stages,
         "total_P0_recovery":    total_P0,
         "M_exit":               current_M,
+        "phi_ref1_deg": phi_deg,
     }
 
 
@@ -474,7 +496,7 @@ if __name__ == "__main__":
     # print("\n[1] Extended Analysis with Channel Reflections & Terminal Normal Shock")
     # analyse_intake4(M_inf=3, theta_1_deg=9, L_1=0.016, y_cowl=0.01366, delta_cowl_deg=4)
 
-    # best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=0.8, L1_step=0.005)
+    # best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4,max_oblique_shocks=5, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=0.8, L1_step=0.001)
     # print("\nBest configuration")
     # print("------------------")
     # print(f"L1      = {best['L_1']:.4f}")
@@ -489,15 +511,15 @@ if __name__ == "__main__":
     """
 
     print("\n[1] Extended Analysis with Channel Reflections & Terminal Normal Shock")
-    analyse_intake4(M_inf=4.35, theta_1_deg = 6, L_1=1.41, y_cowl=1, delta_cowl_deg=4)
+    analyse_intake4(M_inf=4.35, theta_1_deg = 9.5, L_1=1.9, y_cowl=1.2, delta_cowl_deg=4)
 
-    # best = optimise_intake(M_inf=4.35, y_cowl=1, delta_cowl_deg=4, L1_range=(0.01, 3), 
-    #                        theta1_range=(1.0, 20.0), max_oblique_shocks= 6, M_exit_max=0.8, L1_step=0.005, print_all=True)
-    # print("\nBest configuration")
-    # print("------------------")
-    # print(f"L1      = {best['L_1']:.4f}")
-    # print(f"L2      = {best['L_2']:.4f}")
-    # print(f"theta1  = {best['theta_1_deg']:.2f} deg")
-    # print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
-    # print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
-    # print(f"M_exit  = {best['M_exit']:.4f}")
+    best = optimise_intake(M_inf=4.35, y_cowl=1.2, delta_cowl_deg=4, L1_range=(0.01, 3), 
+                           theta1_range=(1.0, 20.0), max_oblique_shocks= 10, M_exit_max=0.95, L1_step=0.005, print_all=True)
+    print("\nBest configuration")
+    print("------------------")
+    print(f"L1      = {best['L_1']:.4f}")
+    print(f"L2      = {best['L_2']:.4f}")
+    print(f"theta1  = {best['theta_1_deg']:.2f} deg")
+    print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
+    print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
+    print(f"M_exit  = {best['M_exit']:.4f}")
