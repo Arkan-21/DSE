@@ -399,7 +399,7 @@ def optimise_intake(
     L1_range: tuple = (0.01, 1.0),
     theta1_range: tuple = (1.0, 20.0),
     L1_step: float = 0.005,
-    theta1_step: float = 0.5,
+    theta1_step: float = 0.25,
     M_exit_min: float = 0.1,  # Minimum allowable subsonic Mach after normal shock
     M_exit_max: float = 0.8,  # Maximum allowable subsonic Mach after normal shock
     print_all: bool = False,
@@ -496,25 +496,7 @@ if __name__ == "__main__":
     # print("\n[1] Extended Analysis with Channel Reflections & Terminal Normal Shock")
     # analyse_intake4(M_inf=3, theta_1_deg=9, L_1=0.016, y_cowl=0.01366, delta_cowl_deg=4)
 
-    # best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4,max_oblique_shocks=5, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=0.8, L1_step=0.001)
-    # print("\nBest configuration")
-    # print("------------------")
-    # print(f"L1      = {best['L_1']:.4f}")
-    # print(f"L2      = {best['L_2']:.4f}")
-    # print(f"theta1  = {best['theta_1_deg']:.2f} deg")
-    # print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
-    # print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
-    # print(f"M_exit  = {best['M_exit']:.4f}")
-
-    """
-    ============================================================================================
-    """
-
-    print("\n[1] Extended Analysis with Channel Reflections & Terminal Normal Shock")
-    analyse_intake4(M_inf=4.35, theta_1_deg = 10, L_1=1.925, y_cowl=1.2, delta_cowl_deg=4)
-
-    best = optimise_intake(M_inf=4.35, y_cowl=1.2, delta_cowl_deg=4, L1_range=(0.01, 3), 
-                           theta1_range=(1.0, 20.0), max_oblique_shocks= 10, M_exit_max=0.95, L1_step=0.005, print_all=True)
+    best = optimise_intake(M_inf=3.0, y_cowl=0.01366, delta_cowl_deg=4,max_oblique_shocks=5, L1_range=(0.01, 1), theta1_range=(1.0, 20.0), print_all=True, M_exit_max=0.8, L1_step=0.001, theta1_step= 0.25)
     print("\nBest configuration")
     print("------------------")
     print(f"L1      = {best['L_1']:.4f}")
@@ -523,3 +505,21 @@ if __name__ == "__main__":
     print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
     print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
     print(f"M_exit  = {best['M_exit']:.4f}")
+
+    """
+    ============================================================================================
+    """
+
+    # print("\n[1] Extended Analysis with Channel Reflections & Terminal Normal Shock")
+    # analyse_intake4(M_inf=4.35, theta_1_deg = 10, L_1=1.925, y_cowl=1.2, delta_cowl_deg=4)
+
+    # best = optimise_intake(M_inf=4.35, y_cowl=1.2, delta_cowl_deg=4, L1_range=(0.01, 3), 
+    #                        theta1_range=(1.0, 20.0), max_oblique_shocks= 10, M_exit_max=0.95, L1_step=0.005, theta1_step= 0.1, print_all=True)
+    # print("\nBest configuration")
+    # print("------------------")
+    # print(f"L1      = {best['L_1']:.4f}")
+    # print(f"L2      = {best['L_2']:.4f}")
+    # print(f"theta1  = {best['theta_1_deg']:.2f} deg")
+    # print(f"theta2  = {best['theta_2_deg']:.2f} deg")   
+    # print(f"P0 rec  = {best['total_P0_recovery']:.6f}")
+    # print(f"M_exit  = {best['M_exit']:.4f}")

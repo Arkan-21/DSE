@@ -531,19 +531,20 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     cbar.set_ticklabels([f"{val:.2f}" for val in mach_ticks])
     ax_cbar.tick_params(labelsize=10, colors='black')
 
+    ax.set_aspect('equal', adjustable='box')
     plt.tight_layout()
     return fig
 
 
 if __name__ == "__main__":
     results = analyse_intake4(
-        M_inf=3,
-        L_1= 0.016,
-        theta_1_deg=9,
-        y_cowl=0.01366,
+        M_inf=4.35,
+        L_1= 1.94,
+        theta_1_deg=9.8,
+        y_cowl=1.2,
         delta_cowl_deg=4,
         verbose=False
     )
 
-    fig = draw_intake_cfd_style(results, mirror= False, delta_iso=-3, L_diffuser=0.005)
+    fig = draw_intake_cfd_style(results, mirror= False, delta_iso=-6, L_diffuser=1)
     plt.show()
