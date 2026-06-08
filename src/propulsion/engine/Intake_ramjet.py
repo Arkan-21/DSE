@@ -511,7 +511,7 @@ if __name__ == "__main__":
     """
 
     print("\n[1] Extended Analysis with Channel Reflections & Terminal Normal Shock")
-    analyse_intake4(M_inf=4.35, theta_1_deg = 9.5, L_1=1.9, y_cowl=1.2, delta_cowl_deg=4)
+    analyse_intake4(M_inf=4.35, theta_1_deg = 10, L_1=1.925, y_cowl=1.2, delta_cowl_deg=4)
 
     best = optimise_intake(M_inf=4.35, y_cowl=1.2, delta_cowl_deg=4, L1_range=(0.01, 3), 
                            theta1_range=(1.0, 20.0), max_oblique_shocks= 10, M_exit_max=0.95, L1_step=0.005, print_all=True)
