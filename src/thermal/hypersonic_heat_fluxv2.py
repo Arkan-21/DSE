@@ -259,7 +259,7 @@ class HypersonicHeatFluxAnalyzer:
 
         # Velocity gradient at stagnation point (Newtonian flow approximation)
         # du/dx = (1/R) * sqrt(2 * (P_inf * M_inf^2) / rho_e)
-        dynamic_pressure = self.P_inf * self.M_inf ** 2
+        dynamic_pressure = 0.5 * self.rho_inf * self.V_inf**2
         du_dx = (1 / radius_nose) * math.sqrt(2 * dynamic_pressure / rho_e)
 
         # Reference conditions
@@ -674,7 +674,7 @@ if __name__ == "__main__":
 
     # Run analysis
     results = analyzer.analyze_vehicle(
-        nose_radius=0.025,
+        nose_radius=0.010,
         fuselage_length=20.0,
         wing_chord=5.0
     )
