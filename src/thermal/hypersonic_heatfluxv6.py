@@ -70,13 +70,13 @@ MACH             = 5.0    # Free-stream Mach number  [-]
 ALTITUDE_KM      = 30.0   # Cruise altitude           [km]
 WALL_TEMP_K      = 373.15 # Wall temperature          [K]
 IS_TURBULENT     = True  # True = turbulent BL
-AOA_DEG          = 1.0    # Angle of attack           [degrees]
+AOA_DEG          = 0.0    # Angle of attack           [degrees]
 
 # Body geometry
 BODY_RADIUS_M    = 2.0   # Cylinder (body) radius              [m]
 OGIVE_LENGTH_M   = 10.493   # Axial length of ogive nose section  [m]
 BODY_LENGTH_M    = 21.0    # Total body length (ogive + cylinder)[m]
-NOSE_RADIUS_M    = 0.010  # Blunted tip radius of curvature     [m]
+NOSE_RADIUS_M    = 0.040  # Blunted tip radius of curvature     [m]
 
 # Wing geometry (if present – set WING_CHORD_M = 0 to skip)
 WING_CHORD_M     = 5.0    # Wing / fin chord length    [m]  (0 = no wing)
