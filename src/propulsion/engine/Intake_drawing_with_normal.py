@@ -459,16 +459,16 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     ax.plot([O[0], O[0]], [O[1], O[1] + ext_y_offset], color=dim_color, lw=1, alpha=0.5)
     ax.plot([P1[0], P1[0]], [P1[1], O[1] + ext_y_offset], color=dim_color, lw=1, alpha=0.5)
     ax.annotate('', xy=(O[0], O[1] + line_y_offset), xytext=(P1[0], O[1] + line_y_offset), arrowprops=dict(arrowstyle='<->', color=dim_color, lw=1))
-    ax.text(L1 / 2, O[1] + text_y_offset, f"$L_1$ = {L1:.4f}", color=dim_color, ha='center', va='bottom' if not mirror else 'top', fontsize=11, weight='bold')
+    ax.text(L1 / 2, O[1] + text_y_offset, f"$L_1$ = {L1:.4f} m", color=dim_color, ha='center', va='bottom' if not mirror else 'top', fontsize=11, weight='bold')
 
     ax.plot([P2[0], P2[0]], [P2[1], O[1] + ext_y_offset], color=dim_color, lw=1, alpha=0.5)
     ax.annotate('', xy=(P1[0], O[1] + line_y_offset), xytext=(P2[0], O[1] + line_y_offset), arrowprops=dict(arrowstyle='<->', color=dim_color, lw=1))
-    ax.text(L1 + L2 / 2, O[1] + text_y_offset, f"$L_2$ = {L2:.4f}", color=dim_color, ha='center', va='bottom' if not mirror else 'top', fontsize=11, weight='bold')
+    ax.text(L1 + L2 / 2, O[1] + text_y_offset, f"$L_2$ = {L2:.4f} m", color=dim_color, ha='center', va='bottom' if not mirror else 'top', fontsize=11, weight='bold')
 
     dim_x_loc = x_start + 0.35 * abs(x_start)
     ax.plot([dim_x_loc, C[0]], [C[1], C[1]], color='black', lw=1, linestyle=":", alpha=0.4)
     ax.annotate('', xy=(dim_x_loc, O[1]), xytext=(dim_x_loc, C[1]), arrowprops=dict(arrowstyle='<->', color='black', lw=1.2))
-    ax.text(dim_x_loc - (0.05 * abs(x_start)), C[1] / 2, f"$y_c$ = {y_c:.4f}", color='black', ha='right', va='center', fontsize=11, rotation=90)
+    ax.text(dim_x_loc - (0.05 * abs(x_start)), C[1] / 2, f"$y_c$ = {y_c:.4f} m", color='black', ha='right', va='center', fontsize=11, rotation=90)
 
     L_iso = x_ns - P2[0]
     if x_ns is not None:
@@ -495,7 +495,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
         ax.text(
         0.5 * (P2[0] + x_ns),
         O[1] + text_y_offset,
-        rf"$L_{{iso}}$ = {x_ns - P2[0]:.4f}",
+        rf"$L_{{iso}}$ = {x_ns - P2[0]:.4f} m",
         color=dim_color,
         ha='center',
         va='bottom' if not mirror else 'top',
