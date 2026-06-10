@@ -37,9 +37,9 @@ Angle of attack effects
 
 MACH              = 5.0     # Free-stream Mach number  [-]
 ALTITUDE_KM       = 31.0    # Cruise altitude           [km]
-WALL_TEMP_K       = 300.0   # Assumed wall temperature  [K]
-IS_TURBULENT      = True    # True = turbulent BL (conservative for TPS sizing)
-AOA_DEG           = 0.0     # Angle of attack           [degrees]
+WALL_TEMP_K       = 373.15   # Assumed wall temperature  [K]
+IS_TURBULENT      = False    # True = turbulent BL (conservative for TPS sizing)
+AOA_DEG           = 5.0     # Angle of attack           [degrees]
 
 # Geometry
 NOSE_RADIUS_M     = 0.010   # Nose tip radius of curvature   [m]
@@ -51,10 +51,10 @@ WING_LE_RADIUS_M  = 0.005   # Wing leading-edge radius        [m]
 WING_WEDGE_DEG    = 6.0     # Wing lower-surface wedge angle at AoA=0  [degrees]
 
 # Analysis resolution
-NUM_POINTS        = 100     # Points along each surface
+NUM_POINTS        = 200     # Points along each surface
 
 # Output
-SAVE_FIGURES      = True    # False → interactive display; True → save PNGs
+SAVE_FIGURES      = False    # False → interactive display; True → save PNGs
 FIGURE_PREFIX     = "heat_flux"
 
 # ============================================================
