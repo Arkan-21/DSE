@@ -43,9 +43,10 @@ from tps_materials import MATERIALS
 # =============================================================================
 
 layer_stack = [
-    ("CVI_C_SiC",     0.003),   # hot-face CMC tile
-    ("Pyrogel_XT_E", 0.010),   # fibrous insulation blanket
-    ("Ti_6Al_4V",    0.003)# structural inner face-sheet   # wing-box skin / fuel-tank wall
+    ("CVI_C_SiC",    0.003),
+    ("AETB_20",     0.002), # hot-face CMC tile
+    ("Pyrogel_XT_E", 0.010),   # aerogel insulation blanket
+    ("Ti_6Al_4V",    0.003),   # structural pressure shell (inner wall)
 ]
 
 panel_area          = 100.0    # m²  (for mass & total-energy output)
@@ -67,7 +68,7 @@ fuel_flash_limit = 400.0       # K
 # HEAT FLUX PROFILE
 # =============================================================================
 
-peak_heat_flux  = 25_000.0    # W/m²
+peak_heat_flux  = 21_000.0    # W/m²
 ramp_up_time    = 1.0         # s
 steady_time     = 3600.0     # s
 ramp_down_time  = 1.0         # s
