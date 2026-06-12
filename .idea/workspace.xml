@@ -5,9 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="a4510b50-6521-4603-8524-c893232b9bab" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/src/thermal/Hypersonic_flux_swept.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/thermal/hypersonic_heatfluxv6.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/hypersonic_heatfluxv6.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/TPS_solver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/TPS_solver.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -48,32 +47,32 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.Fuselagepower.executor": "Run",
-    "Python.Heatsolver_Fuselage (1).executor": "Run",
-    "Python.Heatsolver_Fuselage.executor": "Run",
-    "Python.Hypersonic_flux_swept.executor": "Run",
-    "Python.TPS_solver.executor": "Run",
-    "Python.Tempsolver_wing.executor": "Run",
-    "Python.hypersonic_heat_fluxv2.executor": "Run",
-    "Python.hypersonic_heatfluxv3.executor": "Run",
-    "Python.hypersonic_heatfluxv4.executor": "Run",
-    "Python.hypersonic_heatfluxv5.executor": "Run",
-    "Python.hypersonic_heatfluxv6.executor": "Run",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "main"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.Fuselagepower.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Heatsolver_Fuselage (1).executor&quot;: &quot;Run&quot;,
+    &quot;Python.Heatsolver_Fuselage.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Hypersonic_flux_swept.executor&quot;: &quot;Run&quot;,
+    &quot;Python.TPS_solver.executor&quot;: &quot;Run&quot;,
+    &quot;Python.Tempsolver_wing.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hypersonic_heat_fluxv2.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hypersonic_heatfluxv3.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hypersonic_heatfluxv4.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hypersonic_heatfluxv5.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hypersonic_heatfluxv6.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="C:\Users\chiel\PycharmProjects\DSE\src\thermal" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.Hypersonic_flux_swept">
+  <component name="RunManager" selected="Python.TPS_solver">
     <configuration name="Fuselagepower" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="DSE" />
       <option name="ENV_FILES" value="" />
@@ -191,10 +190,10 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.TPS_solver" />
+        <item itemvalue="Python.hypersonic_heatfluxv6" />
         <item itemvalue="Python.Hypersonic_flux_swept" />
         <item itemvalue="Python.Fuselagepower" />
-        <item itemvalue="Python.hypersonic_heatfluxv6" />
-        <item itemvalue="Python.TPS_solver" />
         <item itemvalue="Python.hypersonic_heatfluxv5" />
       </list>
     </recent_temporary>
