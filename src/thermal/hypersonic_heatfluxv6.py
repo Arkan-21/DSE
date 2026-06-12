@@ -81,7 +81,7 @@ NOSE_RADIUS_M    = 0.040  # Blunted tip radius of curvature     [m]
 # Wing geometry (if present – set WING_CHORD_M = 0 to skip)
 WING_CHORD_M     = 5.0    # Wing / fin chord length    [m]  (0 = no wing)
 WING_LE_RADIUS_M = 0.010  # Wing leading-edge radius   [m]
-WING_WEDGE_DEG   = 5.0    # Wing section half-angle at AoA=0  [degrees]
+WING_WEDGE_DEG   = 0.0    # Wing section half-angle at AoA=0  [degrees]
 
 # Analysis resolution
 NUM_POINTS       = 300    # Points along the body
