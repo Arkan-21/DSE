@@ -208,11 +208,11 @@ def dphi_dx(
 
     term1 = -(phi_tr/M_e* (2 + H_tr)* dMdx)
 
-    term2 = (-phi_tr/r* drdx)
+    #term2 = (-phi_tr/r* drdx)
 
     term3 = (0.5*Cf* (1/np.cos(theta))* (T_e/T0)**((gamma+1)/(2*(gamma-1))))
 
-    return term1 + term2 + term3
+    return term1 + term3
 
 if __name__ == "__main__":
     """
@@ -223,17 +223,17 @@ if __name__ == "__main__":
     # (replace with intake solver outputs)
     # --------------------------------------------------
     gamma = 1.4
-    M_e = 3.816
-    P_e = 4635.8904      # Pa
-    T_e = 342.4176        # K
+    M_e = 3.55
+    P_e = 6637.5     # Pa
+    T_e = 797.92        # K
     T_w = 600.0        # K
-    x = 2            # m
+    x = 4            # m
 
     phi0 = 0.000
-    theta_wall = 12.94       # flat wall
-    r = 0.5                   # planar flow
+    theta_wall = np.radians(9.8)      # flat wall
+    r = 1                  # planar flow
     drdx = 0.02
-    dMdx = 0
+    dMdx = 0.2
 
     # --------------------------------------------------
     # Compute H_tr and Cf
@@ -319,7 +319,7 @@ if __name__ == "__main__":
     plt.plot(
         x_sol,
         delta_star,
-        lw=2, label= "Numxerical method of momentum integration"
+        lw=2, label= "Numerical method of momentum integration"
     )
 
     delta_star2 = x_sol * 0.046* Re_x**(-0.2) +phi0
@@ -327,8 +327,8 @@ if __name__ == "__main__":
     plt.plot(x_sol , delta_star2, lw=2, ls="--", label="Power law method")
 
     plt.xlabel("x [m]")
-    plt.ylabel(r"$\delta$ $*$")
-    plt.title("Boundary Layer RK4 Solution")
+    plt.ylabel(r"$\delta^*$ [m]")
+    plt.title("Boundary Layer Displacement Thickness (BLDT)")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()

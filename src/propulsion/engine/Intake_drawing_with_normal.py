@@ -33,7 +33,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
     P2 = np.array([L1 + L2, (-L1 * np.tan(t1) - L2 * np.tan(t12)) * flip * stretch_factor])
     C = np.array([x_c, -y_c * flip * stretch_factor])
 
-    L_incline = 0.10 * L2
+    L_incline = 0.30 * L2
     C_incline_end = np.array([
         C[0] + L_incline,
         C[1] - L_incline * np.tan(tcowl) * flip * stretch_factor
@@ -272,13 +272,26 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
                 current_angle,
                 target_wall="top"
             )
+            
 
-            zone_pts = np.array([
-                last_shock_vertex,
-                last_bottom_vertex,
-                next_vertex,
-                last_top_vertex
-            ])
+            if next_vertex[0] > C_incline_end[0]:
+
+                zone_pts = np.array([
+                    last_shock_vertex,
+                    last_bottom_vertex,
+                    next_vertex,
+                    C_incline_end,
+                    last_top_vertex
+                ])
+
+            else:
+
+                zone_pts = np.array([
+                    last_shock_vertex,
+                    last_bottom_vertex,
+                    next_vertex,
+                    last_top_vertex
+                ])
 
             ax.fill(
                 zone_pts[:, 0],
@@ -327,6 +340,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
             last_bottom_vertex = next_vertex.copy()
 
             bouncing_up = True
+    
     all_machs.extend(diffuser_machs)
     wall_lw = 3.0
     wall_color = "#2b2b2b"
