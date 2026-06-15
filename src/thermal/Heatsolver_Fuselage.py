@@ -8,9 +8,10 @@ from thermal.tps_materials import MATERIALS
 # =============================================================================
 
 layer_stack = [
-    ("SiC_SiC_CMC", 0.004),
-    ("Aerogel",     0.020),
-    ("Ti6Al4V",     0.002)
+    ("CVI_C_SiC",    0.003),
+    ("AETB_20",     0.002), # hot-face CMC tile
+    ("Pyrogel_XT_E", 0.010),   # aerogel insulation blanket
+    ("Ti_6Al_4V",    0.003),   # structural pressure shell (inner wall)
 ]
 
 wall_area = 400.0                 # m²
@@ -38,8 +39,8 @@ peak_heat_flux = 27090    # [W/m²]
 
 ramp_up_time = 1         # [s]
 steady_time = 3600           # [s]
-ramp_down_time = 1       # [s]
-post_cooling_time = 1
+ramp_down_time = 100       # [s]
+post_cooling_time = 600
 
 # Total mission duration implied by profile
 simulation_time = (

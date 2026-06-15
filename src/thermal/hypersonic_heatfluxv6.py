@@ -829,13 +829,14 @@ class OgiveCylinderAnalysis:
     def plot_thermal_landscape(self, results: Dict, save_prefix: Optional[str] = None):
         """
         Create a coloured body profile where the surface colour indicates
-        local convective heat flux (windward side). Uses a perceptually
-        uniform colormap ('inferno') that works well on white backgrounds.
+        local convective heat flux. Upper half = leeward, lower half = windward
+        (or both windward if AoA=0, since they're identical).
         """
         body = results['body']
         x = body['x']
         q_wind = body['q_wind'] / 1e3  # kW/m²
-        # Build full 2D contour of upper half (axisymmetric)
+        q_lee = body['q_lee'] / 1e3  # kW/m²
+
         x_fine = np.linspace(0, self.L_body, 500)
         r_fine = np.zeros_like(x_fine)
         for i, xi in enumerate(x_fine):
@@ -843,28 +844,44 @@ class OgiveCylinderAnalysis:
                 r_fine[i] = self.ogive.radius(xi)
             else:
                 r_fine[i] = self.R
-        # Interpolate heat flux onto the fine x grid
-        q_fine = np.interp(x_fine, x, q_wind)
+
+        q_wind_fine = np.interp(x_fine, x, q_wind)
+        q_lee_fine = np.interp(x_fine, x, q_lee)
 
         fig, ax = plt.subplots(figsize=(10, 5))
-        # Use 'inferno' – excellent on white background, perceptually uniform
-        # vmin/vmax set to data range to maximise contrast (especially on cylinder)
-        scatter = ax.scatter(x_fine, r_fine, c=q_fine, cmap='plasma',
-                             s=20, edgecolors='none', alpha=0.9,
-                             vmin=q_fine.min(), vmax=q_fine.max())
-        # Mirror lower half (greyed out for clarity)
-        ax.fill_between(x_fine, -r_fine, r_fine, color='lightgray', alpha=0.3)
+
+        vmin = min(q_wind_fine.min(), q_lee_fine.min())
+        vmax = max(q_wind_fine.max(), q_lee_fine.max())
+
+        # Upper half = leeward
+        sc_up = ax.scatter(x_fine, r_fine, c=q_lee_fine, cmap='plasma',
+                           s=20, edgecolors='none', alpha=0.9,
+                           vmin=vmin, vmax=vmax)
+        # Lower half = windward
+        sc_lo = ax.scatter(x_fine, -r_fine, c=q_wind_fine, cmap='plasma',
+                           s=20, edgecolors='none', alpha=0.9,
+                           vmin=vmin, vmax=vmax)
+
         ax.plot(x_fine, r_fine, 'k-', lw=1.5, label='Body contour')
         ax.plot(x_fine, -r_fine, 'k-', lw=1.5)
-        # Mark junction
         ax.axvline(self.L_ogive, color='gray', ls='--', lw=1,
                    label=f'Ogive–cylinder junction (x={self.L_ogive:.2f} m)')
-        # Colour bar
-        cbar = fig.colorbar(scatter, ax=ax, shrink=0.7)
+
+        cbar = fig.colorbar(sc_up, ax=ax, shrink=0.7)
         cbar.set_label('Convective heat flux [kW/m²]', fontsize=10)
+
         ax.set_xlabel('Axial position x [m]', fontsize=10)
         ax.set_ylabel('Radial position r [m]', fontsize=10)
-        ax.set_title(f'Thermal landscape – {self._title_base()}', fontsize=11)
+
+        if abs(self.aoa) < 0.01:
+            ax.set_title(f'Thermal landscape (axisymmetric) – {self._title_base()}', fontsize=11)
+        else:
+            ax.text(0.02, 0.95, 'Leeward', transform=ax.transAxes,
+                    fontsize=9, va='top', ha='left', style='italic', color='dimgray')
+            ax.text(0.02, 0.05, 'Windward', transform=ax.transAxes,
+                    fontsize=9, va='bottom', ha='left', style='italic', color='dimgray')
+            ax.set_title(f'Thermal landscape – {self._title_base()}', fontsize=11)
+
         ax.set_aspect('equal', adjustable='datalim')
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.25)

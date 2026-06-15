@@ -108,14 +108,23 @@ MATERIALS = {
     # FIBROUS / TILE INSULATION  (intermediate layer, no structural role)
     # =========================================================================
 
-    "IMI_Effective": {
-        "density": 128.0,
-        "specific_heat": 1050.0,
-        "thermal_conductivity": 0.08,
-        "emissivity": None,
-        "max_service_temp": 1600.0,
-        "notes": "Homogenised fibrous blanket (FRCI/AETB-like); Shuttle heritage.",
+    "IMI_Pt_Saffil48": {
+        "density": 50.0,
+        "specific_heat": 1130.0,
+        "thermal_conductivity": 0.1,
+        "emissivity": 0.45,
+        "max_service_temp": 1700.0,
+        "notes": "Internal Multiscreen Insulation, Pt-coated ceramic screens with "
+                 "SAFFIL felt spacers (ρ_spacer=48 kg/m³, as in X-38 Chin Panel "
+                 "20-screen module); λ_eff is strongly T- and P-dependent "
+                 "(rises with ambient pressure and hot-side temp) — 0.06 W/mK is "
+                 "an approximate mid-range value near 1 atm at moderate T, NOT "
+                 "a constant; use parametric model of Weiland et al. for accurate "
+                 "sizing. ε=0.45 is the AGED platinum-screen emissivity (worst case "
+                 "after thermal cycling); fresh Au screens ≈0.14+6e-5·T. "
+                 "1700°C hot-face limit per IMI material capability.",
     },
+
     "AETB_20": {
         "density": 320.0,
         "specific_heat": 880.0,

@@ -44,14 +44,13 @@ from tps_materials import MATERIALS
 
 layer_stack = [
     ("CVI_C_SiC",    0.003),# hot-face CMC tile
-    ("AETB_20",     0.002),  # aerogel insulation blanket
-    ("Pyrogel_XT_E", 0.010),   # aerogel insulation blanket
+    ("IMI_Pt_Saffil48",     0.018),  # aerogel insulation blanket  # aerogel insulation blanket
     ("Ti_6Al_4V",    0.003),   # structural pressure shell (inner wall)
 ]
 
 panel_area          = 100.0    # m²  (for mass & total-energy output)
 initial_temperature = 310.0    # K
-ambient_temperature = 226   # K
+ambient_temperature = 280   # K
 
 n_nodes = 300                  # spatial nodes
 dt      = 0.3                  # time step [s]  — CN is unconditionally stable
@@ -68,11 +67,11 @@ fuel_flash_limit = 400.0       # K
 # HEAT FLUX PROFILE
 # =============================================================================
 
-peak_heat_flux  = 21_000.0    # W/m²
+peak_heat_flux  = 79500    # W/m²
 ramp_up_time    = 1.0         # s
 steady_time     = 3600.0     # s
-ramp_down_time  = 1.0         # s
-post_cool_time  = 1.0       # s
+ramp_down_time  = 1        # s
+post_cool_time  = 1       # s
 
 simulation_time = ramp_up_time + steady_time + ramp_down_time + post_cool_time
 
