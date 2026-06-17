@@ -64,14 +64,14 @@ from tps_materials import MATERIALS
 
 layer_stack = [
     ("CVI_C_SiC",    0.003),
-    ("AETB_20",     0.002), # hot-face CMC tile
-    ("Pyrogel_XT_E", 0.010),   # aerogel insulation blanket
-    ("Ti_6Al_4V",    0.003),   # structural pressure shell (inner wall)
+    ("AETB_20",     0.005), # hot-face CMC tile
+    ("Pyrogel_XT_E", 0.007),   # aerogel insulation blanket
+    ("Ti_6Al_4V",    0.001),   # structural pressure shell (inner wall)
 ]
 
 panel_area          = 100.0    # m²  fuselage panel area (outer surface)
 initial_temperature = 295.0    # K
-ambient_temperature = 295.0    # K   free-stream / ambient
+ambient_temperature = 280    # K   free-stream / ambient
 
 n_nodes = 300                  # spatial nodes
 dt      = 0.3                  # time step [s]
@@ -86,38 +86,28 @@ h_inner           = 20.0       # W/(m²·K)  forced-convection coeff, cabin side
 inner_bc          = "convective"   # must be "convective" for AC model
 
 # ── Fuselage geometry for curvature correction ─────────────────────────────
-fuselage_radius   = 2.0        # m  (radius to outer TPS surface)
-q_circumferential_factor = 0.65
+fuselage_radius   = 1.8        # m  (radius to outer TPS surface)
+q_circumferential_factor = 0.85
 #   Circumferential average / peak ratio for a cylinder in hypersonic flow.
 #   0.65 is a reasonable mid-fidelity estimate; 1.0 = conservative peak.
 
 # ── Heat flux profile ──────────────────────────────────────────────────────
-peak_heat_flux  = 25_000.0     # W/m²  peak aero heating at outer CMC surface
-ramp_up_time    =     1.0      # s
+peak_heat_flux  = 39000     # W/m²  peak aero heating at outer CMC surface
+
 steady_time     =  3600.0      # s   (60 min cruise)
-ramp_down_time  =     1.0      # s
-post_cool_time  =     1.0      # s
 
-simulation_time = ramp_up_time + steady_time + ramp_down_time + post_cool_time
 
-snapshot_times = [0.0, 250.0, 500.0, 1000.0, 2000.0,
-                  ramp_up_time + steady_time,
-                  ramp_up_time + steady_time + ramp_down_time,
-                  simulation_time]
+simulation_time = steady_time
+
+snapshot_times = [0.0, 250.0, 500.0, steady_time]
+
+
+def heat_flux_profile(t):
+    return peak_heat_flux
 
 fuel_flash_limit = 400.0       # K  (kept for compatibility)
 
 
-def heat_flux_profile(t):
-    if t <= ramp_up_time:
-        return peak_heat_flux * t / ramp_up_time
-    elif t <= ramp_up_time + steady_time:
-        return peak_heat_flux
-    elif t <= ramp_up_time + steady_time + ramp_down_time:
-        return peak_heat_flux * (1.0
-               - (t - ramp_up_time - steady_time) / ramp_down_time)
-    else:
-        return 0.0
 
 
 # =============================================================================

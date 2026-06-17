@@ -56,13 +56,23 @@ MATERIALS = {
     # =========================================================================
 
     "CVI_C_SiC": {
-        "density": 2500.0,
-        "specific_heat": 750.0,
-        "thermal_conductivity": 10.0,
+        "density": 2100.0,
+        "specific_heat": 1400,
+        "thermal_conductivity": 6.5,
         "emissivity": 0.85,
         "max_service_temp": 1900.0,
         "notes": "CVI-densified C/SiC CMC; good oxidation resistance with SiC coating.",
     },
+
+    "CVI_SiC_SiC": {
+        "density": 2700.0,
+        "specific_heat": 620,
+        "thermal_conductivity": 9.5,
+        "emissivity": 0.85,
+        "max_service_temp": 1650.0,
+        "notes": "CVI-densified SiC/SiC CMC; superior oxidation resistance to C/SiC, lower max temp.",
+    },
+
     "SiC_SiC_CMC": {
         "density": 2700.0,
         "specific_heat": 800.0,

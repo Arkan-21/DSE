@@ -43,9 +43,9 @@ from tps_materials import MATERIALS
 # =============================================================================
 
 layer_stack = [
-    ("CVI_SiC_SiC",    0.003),# hot-face CMC tile
-    ("AETB_20",     0.005),
-    ("Pyrogel_XT_E",     0.07),# aerogel insulation blanket  # aerogel insulation blanket
+    ("CVI_C_SiC",    0.003),# hot-face CMC tile
+    ("AETB_20",     0.002),
+    ("Pyrogel_XT_E",     0.01),# aerogel insulation blanket  # aerogel insulation blanket
     ("Ti_6Al_4V",    0.001),   # structural pressure shell (inner wall)
 ]
 
@@ -53,8 +53,8 @@ panel_area          = 100.0    # m²  (for mass & total-energy output)
 initial_temperature = 310.0    # K
 ambient_temperature = 280   # K
 
-n_nodes = 300                  # spatial nodes
-dt      = 0.3                  # time step [s]  — CN is unconditionally stable
+n_nodes = 400                  # spatial nodes
+dt      = 0.05                  # time step [s]  — CN is unconditionally stable
 
 sigma = 5.670374419e-8         # W/(m²·K⁴)
 
@@ -68,67 +68,36 @@ fuel_flash_limit = 400.0       # K
 # HEAT FLUX PROFILE
 # =============================================================================
 
-peak_heat_flux  = 21000    # W/m²
-ramp_up_time    = 1         # s
+peak_heat_flux  = 20200   # W/m²
 steady_time     = 3600.0     # s
-ramp_down_time  = 1        # s
-post_cool_time  = 1       # s
 
-simulation_time = ramp_up_time + steady_time + ramp_down_time + post_cool_time
 
-snapshot_times = [0.0, 250.0, 500.0, 1000.0, 2000.0,
-                  ramp_up_time + steady_time,
-                  ramp_up_time + steady_time + ramp_down_time,
-                  simulation_time]
+# =============================================================================
+# HEAT FLUX PROFILE
+# =============================================================================
+
+simulation_time = steady_time
+
+snapshot_times = [0.0, 250.0, 500.0, steady_time]
 
 
 def heat_flux_profile(t):
-    if t <= ramp_up_time:
-        return peak_heat_flux * t / ramp_up_time
-    elif t <= ramp_up_time + steady_time:
-        return peak_heat_flux
-    elif t <= ramp_up_time + steady_time + ramp_down_time:
-        return peak_heat_flux * (1.0
-               - (t - ramp_up_time - steady_time) / ramp_down_time)
-    else:
-        return 0.0
+    return peak_heat_flux
 
 
-def plot_temperature_envelope(time_hist, outer_T_hist, inner_T_hist, layer_T_hist,
-                               layer_stack, layer_ranges, rho, cp, dx, T_final):
+def plot_temperature_envelope(time_hist, T_max_hist_true, T_min_hist_true,
+                               T_mean_hist_true):
     """
     Plots max, mean, and min temperature across the full TPS stack over time.
-    Styled to match ANSYS-style dark background temperature history plot.
+    White background with black text for report/publication.
     """
-    # Reconstruct full temperature field statistics at each timestep
-    # We have outer (node 0) and inner (node -1) surface temps,
-    # plus per-layer means. Approximate min/max from layer means + surfaces.
-    n_steps = len(time_hist)
+    T_max_hist  = T_max_hist_true  - 273.15
+    T_min_hist  = T_min_hist_true  - 273.15
+    T_mean_hist = T_mean_hist_true - 273.15
 
-    # Build approximate per-step min/max/mean from available data
-    # Max  = outer surface (always hottest)
-    # Min  = inner surface (always coldest)
-    # Mean = mass-weighted average of layer means
-    T_max_hist = outer_T_hist - 273.15   # K → °C
-    T_min_hist = inner_T_hist - 273.15
-
-    # Mass-weighted mean across all layers
-    total_heat_cap = 0.0
-    weights = {}
-    for name, (s, e) in layer_ranges.items():
-        w = rho[s] * cp[s] * (e - s) * dx
-        weights[name] = w
-        total_heat_cap += w
-
-    T_mean_hist = np.zeros(n_steps)
-    for name, w in weights.items():
-        T_mean_hist += (layer_T_hist[name] - 273.15) * w
-    T_mean_hist /= total_heat_cap
-
-    # ── Figure: ANSYS-style dark background ──────────────────────────────
     fig, ax = plt.subplots(figsize=(13, 6))
-    fig.patch.set_facecolor("#3C3C3C")
-    ax.set_facecolor("#5A5A5A")
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
 
     ax.plot(time_hist, T_max_hist,  color="#4CAF50", lw=1.8,
             label=f"Maximum  ({T_max_hist[-1]:.1f} °C at t={time_hist[-1]:.0f} s)")
@@ -137,15 +106,13 @@ def plot_temperature_envelope(time_hist, outer_T_hist, inner_T_hist, layer_T_his
     ax.plot(time_hist, T_min_hist,  color="#F44336", lw=1.8,
             label=f"Minimum  ({T_min_hist[-1]:.1f} °C at t={time_hist[-1]:.0f} s)")
 
-    # Axis formatting to match dark theme
-    ax.tick_params(colors="white", labelsize=9)
-    ax.xaxis.label.set_color("white")
-    ax.yaxis.label.set_color("white")
-    ax.title.set_color("white")
+    ax.tick_params(colors="black", labelsize=9)
+    ax.xaxis.label.set_color("black")
+    ax.yaxis.label.set_color("black")
+    ax.title.set_color("black")
     for spine in ax.spines.values():
-        spine.set_edgecolor("white")
+        spine.set_edgecolor("black")
 
-    # Y-axis: show min value at bottom like ANSYS
     y_min = T_min_hist.min()
     y_max = T_max_hist.max()
     ax.set_ylim(y_min - 5, y_max * 1.05)
@@ -154,12 +121,15 @@ def plot_temperature_envelope(time_hist, outer_T_hist, inner_T_hist, layer_T_his
     ax.set_xlabel("Time  [s]", fontsize=11)
     ax.set_ylabel("[°C]", fontsize=11)
     ax.set_title("Temperature History — Maximum / Average / Minimum", fontsize=12)
-    ax.legend(fontsize=9, framealpha=0.3, edgecolor="white",
-              labelcolor="white", loc="upper left")
-    ax.grid(True, alpha=0.2, color="white", lw=0.5)
+    ax.legend(fontsize=9, framealpha=0.9, edgecolor="black",
+              labelcolor="black", loc="upper left")
+    ax.grid(True, alpha=0.3, color="black", lw=0.5)
     ax.set_xlim(time_hist[0], time_hist[-1])
 
     plt.tight_layout()
+    fig.savefig("tps_temperature_envelope.pdf",
+                facecolor=fig.get_facecolor(),
+                bbox_inches="tight")
     plt.show()
 # =============================================================================
 # MESH
@@ -305,6 +275,10 @@ inner_T_hist = np.zeros(n_steps)
 flux_hist    = np.zeros(n_steps)
 qrad_hist    = np.zeros(n_steps)
 
+T_max_hist_true = np.zeros(n_steps)
+T_min_hist_true = np.zeros(n_steps)
+T_mean_hist_true = np.zeros(n_steps)
+
 layer_max_T  = {n: initial_temperature  for n, _ in layer_stack}
 layer_T_hist = {n: np.zeros(n_steps)    for n, _ in layer_stack}   # FIX: pre-allocate
 
@@ -334,6 +308,11 @@ for step in range(n_steps):
 
     ab, b = build_system(T, q_aero)
     T = solve_banded((1, 1), ab, b)
+
+    # Add inside the main loop, after solve_banded
+    T_max_hist_true[step] = np.max(T)
+    T_min_hist_true[step] = np.min(T)
+    T_mean_hist_true[step] = np.mean(T)  # simple spatial mean (not mass-weighted)
 
     q_rad_new = eps[0] * sigma * (T[0]**4 - ambient_temperature**4)
     qrad_hist[step] = q_rad_new
@@ -479,10 +458,14 @@ ax4.grid(alpha=0.25)
 plt.suptitle(
     f"TPS Thermal Analysis  ·  Crank–Nicolson Implicit Solver\n"
     f"Peak heat flux {peak_heat_flux/1e3:.0f} kW/m²  "
-    f"·  {simulation_time:.0f} s mission",
+    f"·  {simulation_time:.0f} s steady cruise",
     fontsize=11, fontweight="bold"
 )
 plt.tight_layout()
+fig.savefig("tps_mission_overview.pdf",
+            bbox_inches="tight")
+plt.show()
+
 
 plt.show()
 
@@ -539,15 +522,16 @@ for idx, (t_snap, T_snap) in enumerate(snapshots):
 
 ax.set_xlabel("Distance from outer surface [mm]", fontsize=11)
 ax.set_ylabel("Temperature [K]", fontsize=11)
-ax.set_title("Through-Thickness Temperature Profiles at Selected Times", fontsize=12)
+ax.set_title("Through-Thickness Temperature Profile Wing Skin", fontsize=12)
 ax.legend(fontsize=9, framealpha=0.9, edgecolor="black",
           loc="upper right", ncol=2)
 ax.grid(True, alpha=0.3, color="black", lw=0.5)
 ax.set_xlim(0, x_mm[-1])
 
 plt.tight_layout()
+fig2.savefig("tps_through_thickness.pdf",
+             bbox_inches="tight")
 plt.show()
 
-plot_temperature_envelope(time_hist, outer_T_hist, inner_T_hist,
-                           layer_T_hist, layer_stack, layer_ranges,
-                           rho, cp, dx, T)
+plot_temperature_envelope(time_hist, T_max_hist_true, T_min_hist_true,
+                           T_mean_hist_true)

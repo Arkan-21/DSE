@@ -5,11 +5,21 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="a4510b50-6521-4603-8524-c893232b9bab" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/src/thermal/Hypersonic_heatfluxv7sweeped.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/thermal/FINALKHNGKSJG.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/thermal/TPS_solversteady.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/thermal/Heatsolver_Fuselage.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/Heatsolver_Fuselage.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/Fuselagepower.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/Fuselagepower.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/Hypersonic_heatfluxv7sweeped.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/Hypersonic_heatfluxv7sweeped.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/thermal/TPS_solver.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/TPS_solver.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/thermal/hypersonic_heatfluxv6.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/hypersonic_heatfluxv6.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_body.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_body.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_cockpit_detail.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_cockpit_detail.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_le_spanwise.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_le_spanwise.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_normalised.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_normalised.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_overview_all_qflux.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_overview_all_qflux.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_summary_bar.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_summary_bar.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_thermal_landscape.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_thermal_landscape.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_wing_all_segments.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_wing_all_segments.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/thermal/heat_flux_wing_chordwise_curves.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/heat_flux_wing_chordwise_curves.pdf" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/thermal/tps_materials.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/thermal/tps_materials.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -53,18 +63,21 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python.FINALKHNGKSJG.executor": "Run",
     "Python.Fuselagepower.executor": "Run",
     "Python.Heatsolver_Fuselage (1).executor": "Run",
     "Python.Heatsolver_Fuselage.executor": "Run",
     "Python.Hypersonic_flux_swept.executor": "Run",
     "Python.Hypersonic_heatfluxv7sweeped.executor": "Run",
     "Python.TPS_solver.executor": "Run",
+    "Python.TPS_solversteady.executor": "Run",
     "Python.Tempsolver_wing.executor": "Run",
     "Python.hypersonic_heat_fluxv2.executor": "Run",
     "Python.hypersonic_heatfluxv3.executor": "Run",
     "Python.hypersonic_heatfluxv4.executor": "Run",
     "Python.hypersonic_heatfluxv5.executor": "Run",
     "Python.hypersonic_heatfluxv6.executor": "Run",
+    "Python.tps_materials.executor": "Run",
     "RunOnceActivity.MCP Project settings loaded": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
@@ -77,7 +90,30 @@
       <recent name="C:\Users\chiel\PycharmProjects\DSE\src\thermal" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.TPS_solver">
+  <component name="RunManager" selected="Python.TPS_solversteady">
+    <configuration name="FINALKHNGKSJG" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="DSE" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src/thermal" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/thermal/FINALKHNGKSJG.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <configuration name="Fuselagepower" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="DSE" />
       <option name="ENV_FILES" value="" />
@@ -93,29 +129,6 @@
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <option name="RUN_TOOL" value="" />
       <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/thermal/Fuselagepower.py" />
-      <option name="PARAMETERS" value="" />
-      <option name="SHOW_COMMAND_LINE" value="false" />
-      <option name="EMULATE_TERMINAL" value="false" />
-      <option name="MODULE_MODE" value="false" />
-      <option name="REDIRECT_INPUT" value="false" />
-      <option name="INPUT_FILE" value="" />
-      <method v="2" />
-    </configuration>
-    <configuration name="Heatsolver_Fuselage" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
-      <module name="DSE" />
-      <option name="ENV_FILES" value="" />
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs>
-        <env name="PYTHONUNBUFFERED" value="1" />
-      </envs>
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src/thermal" />
-      <option name="IS_MODULE_SDK" value="true" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <option name="RUN_TOOL" value="" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/thermal/Heatsolver_Fuselage.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
@@ -147,7 +160,7 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="TPS_solver" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+    <configuration name="TPS_solversteady" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="DSE" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -161,7 +174,7 @@
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <option name="RUN_TOOL" value="" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/thermal/TPS_solver.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/thermal/TPS_solversteady.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
@@ -195,11 +208,11 @@
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.TPS_solver" />
+        <item itemvalue="Python.TPS_solversteady" />
+        <item itemvalue="Python.FINALKHNGKSJG" />
         <item itemvalue="Python.Hypersonic_heatfluxv7sweeped" />
-        <item itemvalue="Python.hypersonic_heatfluxv6" />
-        <item itemvalue="Python.Heatsolver_Fuselage" />
         <item itemvalue="Python.Fuselagepower" />
+        <item itemvalue="Python.hypersonic_heatfluxv6" />
       </list>
     </recent_temporary>
   </component>
