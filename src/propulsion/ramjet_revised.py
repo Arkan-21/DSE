@@ -1518,6 +1518,142 @@ class Ramjet:
         plt.tight_layout()
         plt.show()
 
+    def plot_isp_map(
+        self,
+        mach_range=(2.0, 6.0),
+        alt_range=(10.0, 35.0),
+        n_mach=20,
+        n_alt=15,
+        phi=0.7,
+        A0_capture=4.243,
+        contour_levels=None,
+        figsize=(12, 7),
+    ):
+        """
+        Plot a 2-D Isp map over a grid of Mach numbers and altitudes.
+
+        Parameters
+        ----------
+        mach_range   : (Ma_min, Ma_max)
+        alt_range    : (h_min_km, h_max_km)
+        n_mach       : grid resolution along Mach axis
+        n_alt        : grid resolution along altitude axis
+        phi          : equivalence ratio (fixed across grid)
+        A0_capture   : fixed inlet capture area [m²]
+        contour_levels : list of Isp contour values to draw; None = auto
+        figsize      : matplotlib figure size
+        """
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import BoundaryNorm
+        import warnings
+
+        ma_vec = np.linspace(mach_range[0], mach_range[1], n_mach)
+        h_vec  = np.linspace(alt_range[0],  alt_range[1],  n_alt)
+        MA, H  = np.meshgrid(ma_vec, h_vec)       # shape (n_alt, n_mach)
+        ISP    = np.full(MA.shape, np.nan)
+
+        for i, h_km in enumerate(h_vec):
+            for j, Ma in enumerate(ma_vec):
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        inp  = self.inlet_properties(
+                            h=h_km * 1e3, Ma=Ma,
+                            use_fixed_capture_area=True,
+                            A0_capture=A0_capture,
+                        )
+                        iso  = self.isolator_properties(inp)
+                        sec2 = self.combustor_properties2(iso)
+                        sec3 = self.combustor_properties3(sec2, phi=phi)
+                        sec4 = self.combustor_properties4(sec3)
+                        sec5 = self.nozzle_properties(sec4, inp)
+                        perf = self.performance(inp, sec5, sec3)
+
+                    if not perf.get("thermal_choke", False):
+                        ISP[i, j] = perf["Isp"]
+                except Exception:
+                    pass   # leave as NaN (unstart, choke, solver failure, etc.)
+
+        # ── Plotting ──────────────────────────────────────────────────────────
+        fig, ax = plt.subplots(figsize=figsize)
+
+        valid = ISP[np.isfinite(ISP)]
+        if valid.size == 0:
+            print("No valid Isp points found — check operating range.")
+            return ISP, MA, H
+
+        vmin, vmax = np.nanpercentile(ISP, 2), np.nanpercentile(ISP, 98)
+
+        pcm = ax.pcolormesh(
+            MA, H, ISP,
+            cmap="plasma",
+            vmin=vmin, vmax=vmax,
+            shading="auto",
+        )
+        cbar = fig.colorbar(pcm, ax=ax, pad=0.02)
+        cbar.set_label("Specific Impulse Isp [s]", fontsize=11)
+
+        # Contour lines
+        if contour_levels is None:
+            step = max(100, round((vmax - vmin) / 6 / 100) * 100)
+            contour_levels = np.arange(
+                round(vmin / step) * step,
+                round(vmax / step) * step + step,
+                step,
+            )
+        try:
+            cs = ax.contour(
+                MA, H, ISP,
+                levels=contour_levels,
+                colors="white",
+                linewidths=0.8,
+                alpha=0.6,
+            )
+            ax.clabel(cs, fmt="%d s", fontsize=8, inline=True)
+        except Exception:
+            pass
+
+        # NaN mask (unstart / no-solution region)
+        nan_mask = ~np.isfinite(ISP)
+        if nan_mask.any():
+            ax.contourf(
+                MA, H, nan_mask.astype(float),
+                levels=[0.5, 1.5],
+                colors=["#333333"],
+                alpha=0.45,
+            )
+            ax.contour(
+                MA, H, nan_mask.astype(float),
+                levels=[0.5],
+                colors=["white"],
+                linewidths=1.2,
+                linestyles="--",
+            )
+
+        # Design point marker
+        ax.plot(
+            self.DESIGN_MACH,
+            self.DESIGN_ALTITUDE / 1e3,
+            marker="*", markersize=14,
+            color="cyan", markeredgecolor="black", markeredgewidth=0.8,
+            label=f"Design point M={self.DESIGN_MACH}, {self.DESIGN_ALTITUDE/1e3:.0f} km",
+            zorder=5,
+        )
+
+        ax.set_xlabel("Mach Number  Ma₀", fontsize=12)
+        ax.set_ylabel("Altitude  [km]",   fontsize=12)
+        ax.set_title(
+            f"Ramjet Isp Map — H₂ fuel, φ={phi}, A₀={A0_capture:.3f} m²",
+            fontsize=13,
+        )
+        ax.legend(loc="lower right", fontsize=9)
+        ax.grid(True, color="white", alpha=0.08, linewidth=0.5)
+
+        plt.tight_layout()
+        plt.show()
+
+        return ISP, MA, H
 
 # ---------------------------------------------------------------------------
 # Run One Case
@@ -1525,7 +1661,7 @@ class Ramjet:
 def altitude_mach(self, h_km, Ma0):
     """Helper to run a single case and print results."""
     eng = Ramjet()
-    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=1000.0)
+    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, A0 = 4.243)
     iso  = eng.isolator_properties(inp)
     sec2 = eng.combustor_properties2(iso)
     sec3 = eng.combustor_properties3(sec2, phi=0.7)
@@ -1559,6 +1695,7 @@ if __name__ == "__main__":
     Ma0  = 4.0
     mdot = 200.0
     phi  = 0.7
+    A0 = 4.243
 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET PERFORMANCE ANALYSIS (H₂ fuel, φ={phi})")
@@ -1566,78 +1703,18 @@ if __name__ == "__main__":
     print(f"  CEA-backed equilibrium combustion + integral-form Tt/Pt")
     print(f"{'═'*65}")
 
-    inp  = eng.inlet_properties(h=h_km*1e3, Ma=Ma0, m_air=mdot)
+    inp  = eng.inlet_properties(h = h_km*1e3,
+        Ma = Ma0,
+        m_air=None,
+        use_fixed_capture_area=A0,
+        A0_capture=A0,
+        m_air_design=None,
+        h_design=h_km*1e3,
+        Ma_design=None,
+    )
     iso  = eng.isolator_properties(inp)
     sec2 = eng.combustor_properties2(iso)
     sec3 = eng.combustor_properties3(sec2, phi=phi)
-
-    # def find_alpha14_for_choke_at_exit(engine, sec3, tol=0.1):
-    #     """
-    #     Binary-search alpha14 so the thermal choke occurs at x ≈ L34 (combustor exit).
-    #     Returns the found alpha14 and the choke position.
-
-    #     Logic
-    #     -----
-    #     - thermal_choke=True  AND  x_last < L34 - tol  →  duct too narrow  → increase alpha14
-    #     - thermal_choke=True  AND  x_last ≥ L34 - tol  →  choke at exit    → done
-    #     - thermal_choke=False                           →  duct too wide    → decrease alpha14
-    #     """
-    #     L34 = float(engine.L34)
-    #     alpha13 = float(engine.alpha13)
-
-    #     lo = alpha13 * 1.00   # lower bound: constant-area combustor
-    #     hi = alpha13 * 8.00   # upper bound: very diverging (won't choke)
-
-    #     best_alpha14 = None
-    #     best_x_choke = None
-
-    #     print(f"\n── Bisection for alpha14 (target: choke at x ≈ {L34:.3f} m) ──")
-
-    #     for iteration in range(60):
-    #         mid = 0.5 * (lo + hi)
-    #         engine.alpha14 = mid
-
-    #         result4 = engine.combustor_properties4(sec3)
-    #         sol     = result4["solution"]
-    #         x_last  = float(sol["x"][-1])
-    #         choked  = result4["thermal_choke"]
-
-    #         print(f"  iter {iteration:2d}:  alpha14={mid:.4f}  AR={mid/alpha13:.3f}"
-    #             f"  x_last={x_last:.4f}  choked={choked}")
-
-    #         if not choked:
-    #             # Duct diverges too fast — Ma never reaches 1 — shrink upper bound
-    #             hi = mid
-    #             continue
-
-    #         # Choke occurred; record best candidate
-    #         if best_alpha14 is None or abs(x_last - L34) < abs(best_x_choke - L34):
-    #             best_alpha14 = mid
-    #             best_x_choke = x_last
-
-    #         if x_last >= L34 - tol:
-    #             # Choke is at or past the desired exit
-    #             hi = mid
-    #         else:
-    #             # Choke too early — need more divergence
-    #             lo = mid
-
-    #         if (hi - lo) < 1e-4:
-    #             break
-
-    #     print(f"\n  ✓  alpha14 = {best_alpha14:.4f}  "
-    #         f"(A4/A3 = {best_alpha14/alpha13:.3f})  "
-    #         f"choke at x = {best_x_choke:.4f} m")
-    #     engine.alpha14 = best_alpha14
-    #     return best_alpha14, best_x_choke
-
-
-
-
-
-    # alpha14_opt, x_choke = find_alpha14_for_choke_at_exit(eng, sec3)
-    # print(f"  → use engine.alpha14 = {alpha14_opt:.4f}")
-
     sec4 = eng.combustor_properties4(sec3)
 
     if sec4["thermal_choke"]:
@@ -1654,6 +1731,7 @@ if __name__ == "__main__":
         ("Velocity V₀",            "V0",  "m/s", 1.0),
         ("Tt0 (integral)",         "Tt0", "K",   1.0),
         ("Pt0 (integral)",         "Pt0", "kPa", 1e-3),
+        ("Area A₀",              "A0",  "m²",  1.0),
     ])
 
     print_section("Section 1 — Isolator entrance", iso, [
@@ -1711,3 +1789,12 @@ if __name__ == "__main__":
         print(f"    {sp:>4}: {y:.4f}")
 
     eng.plot_flowpath(inp, iso, sec2, sec3, sec4, sec5)    
+
+isp_grid, ma_grid, h_grid = eng.plot_isp_map(
+    mach_range=(2.5, 6.0),
+    alt_range=(10.0, 35.0),
+    n_mach=20,
+    n_alt=15,
+    phi=0.7,
+    A0_capture=4.243,
+)

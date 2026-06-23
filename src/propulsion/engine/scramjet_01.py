@@ -735,10 +735,10 @@ class Scramjet:
     L12 = 0.40
     L23 = 0.01
     L34 = 1.00
-    L45 = 1.0
+    L45 = 0.4
     alpha12 = 1.0
     alpha13 = 1.1
-    alpha14 = 2.4
+    alpha14 = 2.5
     alpha05 = 2.0
 
     EPSILON     = 0.4
@@ -906,6 +906,14 @@ class Scramjet:
 
         rho1 = P1 / (R1*T1)
         A1   = mdot / (rho1*V1)
+
+
+        #for testing
+        M1 = 3.6
+        P1 = 26.6e-3
+        T1 =760
+        Tt1 =2395
+        mdot = 0.37
 
         L_iso = getattr(self, "L01", 0.1)
         sol = {
