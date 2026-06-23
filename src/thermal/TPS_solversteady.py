@@ -1,36 +1,4 @@
-"""
-TPS Through-Thickness Thermal Solver
-=====================================
-Crank–Nicolson implicit finite-difference scheme.
-  - Unconditionally stable → large dt allowed, no Fourier-number restriction
-  - 2nd-order accurate in both space and time
-  - Tri-diagonal system solved via scipy.linalg.solve_banded  O(N)
 
-Outer BC  (x = 0):  q_aero(t) – ε σ (T⁴ – T_amb⁴)  = ρ cp dx/dt · ΔT
-                    Radiation linearised each step as h_rad·(T – T_amb)
-Inner BC  (x = L):  adiabatic  –or–  convective to cabin air
-
-Outputs
--------
-  • Time histories of outer / inner surface temperatures
-  • Final through-thickness temperature profile
-  • Layer-by-layer peak temperature vs material limit
-  • Heat soak into the inner structural / fuel layer
-  • Through-thickness snapshots at user-defined times
-
-Bugs fixed vs original
-----------------------
-  1. tps_materials.py was absent; now provided as a companion file.
-  2. shade_layers() was a no-op (loop body was `pass`) and unused; removed.
-  3. q_inner_series list-comprehension multiplied by 0.0 (leftover debug
-     artifact) and was never used downstream; removed entirely.
-  4. last_name / last_name_key were redundant aliases for the same string;
-     unified to last_name throughout.
-  5. Guard against empty snapshots list before the final-frame append.
-  6. layer_T_hist lists are now always exactly n_steps long (append moved
-     to be unconditional per step), removing the need for the defensive
-     time_hist[:len(hist)] slice.
-"""
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -38,9 +6,6 @@ from scipy.linalg import solve_banded
 
 from tps_materials import MATERIALS
 
-# =============================================================================
-# USER INPUTS
-# =============================================================================
 
 layer_stack = [
     ("CVI_C_SiC",    0.003),# hot-face CMC tile
