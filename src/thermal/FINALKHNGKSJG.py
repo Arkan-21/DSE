@@ -1,24 +1,4 @@
-#!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool
-=============================================
-Eckert Reference Enthalpy Method + Fay-Riddell stagnation correlation.
-Validated range: Mach 2–8, altitudes 10–65 km.
-Multi-segment swept wing with correct sweep-angle heat flux correction.
 
-Hot-wall mode (HOT_WALL = True):
-  At every surface point, solves for the radiation-equilibrium wall temperature
-  where convective heating equals re-radiated power:
-      q_conv(T_w) = ε · σ · T_w⁴
-  This gives a physically consistent, self-consistent T_w distribution rather
-  than assuming a uniform prescribed temperature.
-
-All figures are saved as vector PDFs.
-"""
-
-# ============================================================
-#  USER INPUTS
-# ============================================================
 MACH             = 5.0
 ALTITUDE_KM      = 30.0
 WALL_TEMP_K      = 373        # used only when HOT_WALL = False
