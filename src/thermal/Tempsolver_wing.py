@@ -9,7 +9,7 @@ from tps_materials import MATERIALS
 
 layer_stack = [
 
-    ("SiC_SiC_CMC", 0.004),
+    ("CVI-C/SiC", 0.004),
     ('IMI_Effective',     0.010),
     ("Gamma_TiAl",  0.003)
 
@@ -18,10 +18,10 @@ layer_stack = [
 wing_area = 100.0          # m² represented
 
 initial_temperature = 295.0
-ambient_temperature = 220.0
+ambient_temperature = 295.0
 
 dt = 0.002
-n_nodes = 60
+n_nodes = 100
 
 sigma = 5.670374419e-8
 
@@ -32,7 +32,7 @@ sigma = 5.670374419e-8
 peak_heat_flux = 40000.0     # W/m²
 
 ramp_up_time = 1
-steady_time = 300.0
+steady_time = 2500.0
 ramp_down_time = 1.0
 
 post_cooling_time = 1.0

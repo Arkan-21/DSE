@@ -26,355 +26,341 @@
 # - Some values intentionally left as None when uncertain.
 # =============================================================================
 
+#!/usr/bin/env python3
+"""
+TPS Material Properties Database
+==================================
+Extended for hypersonic TPS, cabin insulation, and structural applications.
+
+Each entry requires:
+  density              [kg/m³]
+  specific_heat        [J/(kg·K)]
+  thermal_conductivity [W/(m·K)]   — representative mid-range value
+  emissivity           [-]          (None for non-surface / interior materials)
+  max_service_temp     [K]          (None if not formally rated)
+  notes                str          brief engineering description
+
+Thermal conductivity notes
+--------------------------
+Many of these materials are strongly temperature-dependent.  The values given
+are representative of the mid-range operating point.  For high-fidelity work,
+replace with a k(T) callable.  Aerogel and fibrous blanket values are at ~500 K;
+they rise significantly above 800 K due to radiation transport through the pore
+network.
+"""
+
 MATERIALS = {
 
     # =========================================================================
-    # TITANIUM ALLOYS
+    # HOT-FACE CERAMICS & CERAMIC MATRIX COMPOSITES  (surface-capable)
     # =========================================================================
 
-    "Ti6Al4V": {
-
-        "type": "Titanium Alloy",
-
-        "density": 4430,
-
-        "thermal_conductivity": 6.7,
-
-        "specific_heat": 560,
-
-        "emissivity": 0.60,
-
-        "max_service_temp": 873,
-
-        "youngs_modulus": 113e9,
-
-        "poisson_ratio": 0.34,
-
-        "thermal_expansion": 8.6e-6,
-
-        "yield_strength": 880e6,
-
-        "creep_temp_limit": 773,
-
-        "notes":
-            "Conventional aerospace titanium alloy. "
-            "Good strength-to-weight but poor above ~600C."
+    "CVI_C_SiC": {
+        "density": 2500.0,
+        "specific_heat": 750.0,
+        "thermal_conductivity": 10.0,
+        "emissivity": 0.85,
+        "max_service_temp": 1900.0,
+        "notes": "CVI-densified C/SiC CMC; good oxidation resistance with SiC coating.",
+    },
+    "SiC_SiC_CMC": {
+        "density": 2700.0,
+        "specific_heat": 800.0,
+        "thermal_conductivity": 4.5,
+        "emissivity": 0.85,
+        "max_service_temp": 1700.0,
+        "notes": "SiC fibre / SiC matrix CMC; excellent oxidation resistance; turbine-heritage.",
+    },
+    "C_C_SiC": {
+        "density": 1800.0,
+        "specific_heat": 800.0,
+        "thermal_conductivity": 12.0,
+        "emissivity": 0.88,
+        "max_service_temp": 2000.0,
+        "notes": "C/C with SiC coating; ultra-high temp; used on X-38 nose cap.",
+    },
+    "Monolithic_SiC": {
+        "density": 3210.0,
+        "specific_heat": 750.0,
+        "thermal_conductivity": 60.0,
+        "emissivity": 0.83,
+        "max_service_temp": 1900.0,
+        "notes": "Dense sintered SiC; high k limits insulation use; good for leading edges.",
+    },
+    "UHTC_ZrB2_SiC": {
+        "density": 5560.0,
+        "specific_heat": 468.0,
+        "thermal_conductivity": 60.0,
+        "emissivity": 0.80,
+        "max_service_temp": 2500.0,
+        "notes": "ZrB2-20SiC UHTC; oxidation-stable to ~2300 K; leading-edge material.",
+    },
+    "Hafnium_Carbide": {
+        "density": 12200.0,
+        "specific_heat": 200.0,
+        "thermal_conductivity": 10.0,
+        "emissivity": 0.70,
+        "max_service_temp": 3000.0,
+        "notes": "HfC ceramic; highest-temp stagnation cap material; very dense.",
     },
 
+    # =========================================================================
+    # FIBROUS / TILE INSULATION  (intermediate layer, no structural role)
+    # =========================================================================
+
+    "IMI_Pt_Saffil48": {
+        "density": 50.0,
+        "specific_heat": 1130.0,
+        "thermal_conductivity": 0.1,
+        "emissivity": 0.45,
+        "max_service_temp": 1700.0,
+        "notes": "Internal Multiscreen Insulation, Pt-coated ceramic screens with "
+                 "SAFFIL felt spacers (ρ_spacer=48 kg/m³, as in X-38 Chin Panel "
+                 "20-screen module); λ_eff is strongly T- and P-dependent "
+                 "(rises with ambient pressure and hot-side temp) — 0.06 W/mK is "
+                 "an approximate mid-range value near 1 atm at moderate T, NOT "
+                 "a constant; use parametric model of Weiland et al. for accurate "
+                 "sizing. ε=0.45 is the AGED platinum-screen emissivity (worst case "
+                 "after thermal cycling); fresh Au screens ≈0.14+6e-5·T. "
+                 "1700°C hot-face limit per IMI material capability.",
+    },
+
+    "AETB_20": {
+        "density": 320.0,
+        "specific_heat": 880.0,
+        "thermal_conductivity": 0.07,
+        "emissivity": None,
+        "max_service_temp": 1530.0,
+        "notes": "AETB-20 tile; 320 kg/m³; successor to Shuttle HRSI tiles.",
+    },
+    "FRCI_12": {
+        "density": 192.0,
+        "specific_heat": 879.0,
+        "thermal_conductivity": 0.065,
+        "emissivity": None,
+        "max_service_temp": 1530.0,
+        "notes": "FRCI-12 tile; used on Shuttle fuselage side panels.",
+    },
+    "Alumina_Fibre_Blanket": {
+        "density": 130.0,
+        "specific_heat": 1050.0,
+        "thermal_conductivity": 0.12,
+        "emissivity": None,
+        "max_service_temp": 1600.0,
+        "notes": "Saffil-type alumina fibre blanket; recrystallises above 1600 K.",
+    },
+    "Mullite_Fibre_Board": {
+        "density": 400.0,
+        "specific_heat": 960.0,
+        "thermal_conductivity": 0.25,
+        "emissivity": None,
+        "max_service_temp": 1700.0,
+        "notes": "Mullite fibre board; dimensionally stable; good chemical resistance.",
+    },
+    "Min_K_Board": {
+        "density": 320.0,
+        "specific_heat": 1000.0,
+        "thermal_conductivity": 0.022,
+        "emissivity": None,
+        "max_service_temp": 1273.0,
+        "notes": "Microporous opacified silica board; lowest λ rigid insulator below 1000 K.",
+    },
+    "Pyrogel_XT_E": {
+        "density": 160.0,
+        "specific_heat": 1100.0,
+        "thermal_conductivity": 0.016,
+        "emissivity": None,
+        "max_service_temp": 923.0,
+        "notes": "Pyrogel XT-E aerogel blanket; λ≈0.016 W/mK at 500 K; 650 °C limit.",
+    },
+    "Cryogel_Z": {
+        "density": 128.0,
+        "specific_heat": 1000.0,
+        "thermal_conductivity": 0.014,
+        "emissivity": None,
+        "max_service_temp": 394.0,
+        "notes": "Cryogel Z aerogel blanket; cryogenic fuel-tank insulation.",
+    },
+    "BN_Fibrous_Board": {
+        "density": 400.0,
+        "specific_heat": 1000.0,
+        "thermal_conductivity": 1.50,
+        "emissivity": None,
+        "max_service_temp": 2000.0,
+        "notes": "h-BN fibrous board; electrically insulating; very high temp in inert atmosphere.",
+    },
+
+    # =========================================================================
+    # STRUCTURAL METALS
+    # =========================================================================
 
     "Gamma_TiAl": {
-
-        "type": "Gamma Titanium Aluminide",
-
-        "density": 3900,
-
-        "thermal_conductivity": 11.0,
-
-        "specific_heat": 750,
-
-        "emissivity": 0.70,
-
-        "max_service_temp": 1173,
-
-        "youngs_modulus": 170e9,
-
-        "poisson_ratio": 0.27,
-
-        "thermal_expansion": 11e-6,
-
-        "yield_strength": 450e6,
-
-        "creep_temp_limit": 1073,
-
-        "notes":
-            "High-temperature lightweight intermetallic. "
-            "Strong candidate for hypersonic hot structures."
-    },
-
-
-    # =========================================================================
-    # NICKEL SUPERALLOYS
-    # =========================================================================
-
-    "Inconel_718": {
-
-        "type": "Nickel Superalloy",
-
-        "density": 8190,
-
-        "thermal_conductivity": 11.4,
-
-        "specific_heat": 435,
-
-        "emissivity": 0.80,
-
-        "max_service_temp": 1250,
-
-        "youngs_modulus": 200e9,
-
-        "poisson_ratio": 0.29,
-
-        "thermal_expansion": 13e-6,
-
-        "yield_strength": 1030e6,
-
-        "creep_temp_limit": 1100,
-
-        "notes":
-            "Excellent creep resistance and oxidation resistance. "
-            "Heavy."
-    },
-
-
-    "Haynes_230": {
-
-        "type": "Nickel Superalloy",
-
-        "density": 8970,
-
-        "thermal_conductivity": 8.4,
-
-        "specific_heat": 460,
-
-        "emissivity": 0.80,
-
-        "max_service_temp": 1425,
-
-        "youngs_modulus": 205e9,
-
-        "poisson_ratio": 0.31,
-
-        "thermal_expansion": 12.8e-6,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": 1200,
-
-        "notes":
-            "Very strong oxidation resistance at extreme temperatures."
-    },
-
-
-    # =========================================================================
-    # CMC MATERIALS
-    # =========================================================================
-
-    "SiC_SiC_CMC": {
-
-        "type": "CMC",
-
-        "density": 2600,
-
-        "thermal_conductivity": 15.0,
-
-        "specific_heat": 800,
-
-        "emissivity": 0.90,
-
-        "max_service_temp": 1900,
-
-        "youngs_modulus": None,
-
-        "poisson_ratio": None,
-
-        "thermal_expansion": 4e-6,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": 1700,
-
-        "notes":
-            "Silicon-carbide ceramic matrix composite. "
-            "Excellent high-temperature capability."
-    },
-
-    "IMI_Effective": {
-
-        "type": "Integrated Multilayer Insulation",
-
-        "density": 80,
-
-        "thermal_conductivity": 0.010,
-
-        "specific_heat": 1000,
-
-        "emissivity": 0.30,
-
-        "max_service_temp": 1400,
-
-        "youngs_modulus": None,
-
-        "poisson_ratio": None,
-
-        "thermal_expansion": None,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": None,
-
-        "notes":
-            "Effective-property representation of a high-temperature "
-            "Integrated Multilayer Insulation (IMI) system. "
-            "Represents combined radiation-shield and fibrous-layer "
-            "performance for conceptual hypersonic TPS sizing. "
-            "Thermal conductivity is an equivalent through-thickness "
-            "value intended for 1D thermal analysis."
-    },
-
-
-    "C_C_CMC": {
-
-        "type": "Carbon-Carbon Composite",
-
-        "density": 1750,
-
-        "thermal_conductivity": 25.0,
-
-        "specific_heat": 710,
-
-        "emissivity": 0.85,
-
-        "max_service_temp": 2500,
-
-        "youngs_modulus": None,
-
-        "poisson_ratio": None,
-
-        "thermal_expansion": 1e-6,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": None,
-
-        "notes":
-            "Requires oxidation protection."
-    },
-
-
-    # =========================================================================
-    # INSULATION MATERIALS
-    # =========================================================================
-
-    "IMI_Insulation": {
-
-        "type": "Insulation",
-
-        "density": None,
-
-        "thermal_conductivity": 0.05,
-
-        "specific_heat": None,
-
+        "density": 3900.0,
+        "specific_heat": 530.0,
+        "thermal_conductivity": 22.0,
         "emissivity": None,
-
-        "max_service_temp": None,
-
-        "youngs_modulus": None,
-
-        "poisson_ratio": None,
-
-        "thermal_expansion": None,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": None,
-
-        "notes":
-            "Placeholder IMI insulation properties. "
-            "Replace with actual supplier/manufacturer data."
+        "max_service_temp": 1173.0,
+        "notes": "γ-TiAl intermetallic; low density; specific strength to 900 °C.",
     },
-
-
-    "Aerogel": {
-
-        "type": "Aerogel Insulation",
-
-        "density": 120,
-
-        "thermal_conductivity": 0.018,
-
-        "specific_heat": 1000,
-
-        "emissivity": 0.90,
-
-        "max_service_temp": 923,
-
-        "youngs_modulus": None,
-
-        "poisson_ratio": None,
-
-        "thermal_expansion": None,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": None,
-
-        "notes":
-            "Excellent insulation, fragile mechanically."
+    "Al_2024": {
+        "density": 2780.0,
+        "specific_heat": 875.0,
+        "thermal_conductivity": 121.0,
+        "emissivity": None,
+        "max_service_temp": 450.0,
+        "notes": "Al 2024-T3; standard fuselage skin; poor above 450 K sustained.",
     },
-
+    "Al_2099": {
+        "density": 2630.0,
+        "specific_heat": 900.0,
+        "thermal_conductivity": 95.0,
+        "emissivity": None,
+        "max_service_temp": 480.0,
+        "notes": "Al-Li 2099; 5% lighter than 2024; better elevated-temperature properties.",
+    },
+    "Ti_6Al_4V": {
+        "density": 4430.0,
+        "specific_heat": 526.0,
+        "thermal_conductivity": 6.7,
+        "emissivity": None,
+        "max_service_temp": 600.0,
+        "notes": "Ti-6Al-4V; excellent specific strength; cabin pressure shell to 600 K.",
+    },
+    "Ti_Beta_21S": {
+        "density": 4940.0,
+        "specific_heat": 500.0,
+        "thermal_conductivity": 8.0,
+        "emissivity": None,
+        "max_service_temp": 700.0,
+        "notes": "Ti Beta-21S; higher high-temp strength than Ti-6Al-4V; X-43 heritage.",
+    },
+    "Inconel_625": {
+        "density": 8440.0,
+        "specific_heat": 410.0,
+        "thermal_conductivity": 9.8,
+        "emissivity": 0.70,
+        "max_service_temp": 1173.0,
+        "notes": "Inconel 625 Ni superalloy; metallic TPS option; oxidation-stable to ~1150 K.",
+    },
+    "Haynes_230": {
+        "density": 8970.0,
+        "specific_heat": 397.0,
+        "thermal_conductivity": 8.9,
+        "emissivity": 0.72,
+        "max_service_temp": 1323.0,
+        "notes": "Haynes 230; excellent long-duration oxidation resistance; combustor-liner use.",
+    },
+    "Rene_N5": {
+        "density": 8650.0,
+        "specific_heat": 440.0,
+        "thermal_conductivity": 11.0,
+        "emissivity": 0.65,
+        "max_service_temp": 1423.0,
+        "notes": "René N5 single-crystal Ni superalloy; turbine blade material.",
+    },
+    "Refractory_W": {
+        "density": 19300.0,
+        "specific_heat": 134.0,
+        "thermal_conductivity": 130.0,
+        "emissivity": 0.45,
+        "max_service_temp": 3300.0,
+        "notes": "Pure tungsten; highest melting point metal; nozzle throat / plasma-facing.",
+    },
 
     # =========================================================================
-    # STRUCTURAL MATERIALS
+    # THERMAL BARRIER COATINGS & SURFACE COATINGS
     # =========================================================================
 
-    "Aluminum_7075_T6": {
-
-        "type": "Aluminum Alloy",
-
-        "density": 2810,
-
-        "thermal_conductivity": 130,
-
-        "specific_heat": 960,
-
-        "emissivity": 0.10,
-
-        "max_service_temp": 393,
-
-        "youngs_modulus": 71e9,
-
-        "poisson_ratio": 0.33,
-
-        "thermal_expansion": 23e-6,
-
-        "yield_strength": 500e6,
-
-        "creep_temp_limit": 373,
-
-        "notes":
-            "Very temperature sensitive."
+    "YSZ_TBC": {
+        "density": 5600.0,
+        "specific_heat": 505.0,
+        "thermal_conductivity": 2.0,
+        "emissivity": 0.70,
+        "max_service_temp": 1473.0,
+        "notes": "7YSZ TBC (APS/EB-PVD); turbine-blade coating.",
+    },
+    "CMAS_Resistant_TBC": {
+        "density": 6200.0,
+        "specific_heat": 430.0,
+        "thermal_conductivity": 1.6,
+        "emissivity": 0.72,
+        "max_service_temp": 1573.0,
+        "notes": "Gd2Zr2O7 next-gen TBC; CMAS-resistant; lower λ than YSZ.",
+    },
+    "RCC_Coating": {
+        "density": 1850.0,
+        "specific_heat": 800.0,
+        "thermal_conductivity": 6.5,
+        "emissivity": 0.89,
+        "max_service_temp": 1923.0,
+        "notes": "SiC oxidation coating over C/C (RCC); Shuttle nose-cap heritage.",
     },
 
+    # =========================================================================
+    # CABIN / INTERIOR MATERIALS
+    # =========================================================================
 
-    "CFRP": {
-
-        "type": "Carbon Fiber Reinforced Polymer",
-
-        "density": 1600,
-
-        "thermal_conductivity": None,
-
-        "specific_heat": 900,
-
+    "PEEK_CF_30": {
+        "density": 1450.0,
+        "specific_heat": 1100.0,
+        "thermal_conductivity": 0.35,
+        "emissivity": None,
+        "max_service_temp": 523.0,
+        "notes": "CF-30/PEEK; aerospace interior structure; excellent FST; 250 °C continuous.",
+    },
+    "Kapton_Film": {
+        "density": 1420.0,
+        "specific_heat": 1090.0,
+        "thermal_conductivity": 0.12,
         "emissivity": 0.85,
+        "max_service_temp": 673.0,
+        "notes": "Kapton HN; MLI substrate / vapour barrier.",
+    },
+    "Nextel_Fabric": {
+        "density": 2700.0,
+        "specific_heat": 880.0,
+        "thermal_conductivity": 0.18,
+        "emissivity": None,
+        "max_service_temp": 1700.0,
+        "notes": "3M Nextel 312 fabric; surface durability coat over fibrous tiles.",
+    },
 
-        "max_service_temp": 450,
+    # =========================================================================
+    # ABLATIVES
+    # =========================================================================
 
-        "youngs_modulus": None,
-
-        "poisson_ratio": None,
-
-        "thermal_expansion": None,
-
-        "yield_strength": None,
-
-        "creep_temp_limit": None,
-
-        "notes":
-            "Matrix temperature limits dominate."
-    }
-
+    "PICA": {
+        "density": 240.0,
+        "specific_heat": 1400.0,
+        "thermal_conductivity": 0.27,
+        "emissivity": 0.90,
+        "max_service_temp": 3100.0,
+        "notes": "PICA ablator; Dragon/Stardust heritage; effective to >3000 K via ablation.",
+    },
+    "AVCOAT": {
+        "density": 512.0,
+        "specific_heat": 1400.0,
+        "thermal_conductivity": 0.24,
+        "emissivity": 0.88,
+        "max_service_temp": 3000.0,
+        "notes": "Avcoat ablator; Orion/Apollo heritage; epoxy-novolac/silica microspheres.",
+    },
+    "SLA_561V": {
+        "density": 288.0,
+        "specific_heat": 1200.0,
+        "thermal_conductivity": 0.12,
+        "emissivity": 0.87,
+        "max_service_temp": 2500.0,
+        "notes": "SLA-561V; Mars lander backshell ablator; lower heat flux than lunar return.",
+    },
+    "Cork_Ablative": {
+        "density": 400.0,
+        "specific_heat": 1900.0,
+        "thermal_conductivity": 0.10,
+        "emissivity": 0.85,
+        "max_service_temp": 1200.0,
+        "notes": "Cork-phenolic ablative; Ariane 5 interstage; cheap; moderate flux only.",
+    },
 }
 
 

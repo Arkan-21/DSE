@@ -61,9 +61,9 @@ class TankStructure:
         k_al        = 230,      # thermal cond.      [W/m/K]
         weld_eff    = 0.85,     # weld efficiency    [-]
         # ── insulation (Table 1 defaults: PU closed foam) ─
-        ins_thickness  = 0.005,  # insulation thickness [m]
+        ins_thickness  = 0.00,  # insulation thickness [m]
         rho_ins        = 33,    # foam density         [kg/m³]
-        k_ins          = 0.026, # thermal cond.        [W/m/K]
+        k_ins          = 0.1, # thermal cond.        [W/m/K]
     ):
         self.d        = diameter
         self.L_cyl    = cylindrical_length
@@ -576,9 +576,9 @@ if __name__ == "__main__":
     # INITIAL CONDITIONS  (matching Table 1 of Parello et al.)
     # ========================================================
 
-    m_H2_initial         = 41000/2+3000   # hydrogen mass per tank [kg]
+    m_H2_initial         = 11420  # hydrogen mass per tank [kg]
                                      # (11420 kg total / 2 tanks)
-    p_initial            = 2.0e5    # Pa  (2 bar absolute)
+    p_initial            = 5.0e5    # Pa  (2 bar absolute)
     t_liq_initial        = 20.0     # K
     t_gas_initial        = 25.0     # K
     fill_level_initial   = 0.97     # 97%  (Table 1)
@@ -633,7 +633,7 @@ if __name__ == "__main__":
     time_steps   = np.arange(0, sim_duration, dt)
 
     T_ambient       = 125.65             # ambient temperature [K] (Table 1)
-    m_dot_engine    = 2.1       # engine fuel draw  [kg/s] based on the 143kg/s air flow for 2 engines assuming 0.5 equivalence ratio
+    m_dot_engine    = 0      # engine fuel draw  [kg/s] based on the 143kg/s air flow for 2 engines assuming 0.5 equivalence ratio
                                         
 
     # ========================================================
