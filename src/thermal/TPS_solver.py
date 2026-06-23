@@ -43,9 +43,10 @@ from tps_materials import MATERIALS
 # =============================================================================
 
 layer_stack = [
-    ("CVI_C_SiC",    0.003),# hot-face CMC tile
-    ("IMI_Pt_Saffil48",     0.018),  # aerogel insulation blanket  # aerogel insulation blanket
-    ("Ti_6Al_4V",    0.003),   # structural pressure shell (inner wall)
+    ("CVI_SiC_SiC",    0.003),# hot-face CMC tile
+    ("AETB_20",     0.005),
+    ("Pyrogel_XT_E",     0.07),# aerogel insulation blanket  # aerogel insulation blanket
+    ("Ti_6Al_4V",    0.001),   # structural pressure shell (inner wall)
 ]
 
 panel_area          = 100.0    # m²  (for mass & total-energy output)
@@ -67,8 +68,8 @@ fuel_flash_limit = 400.0       # K
 # HEAT FLUX PROFILE
 # =============================================================================
 
-peak_heat_flux  = 79500    # W/m²
-ramp_up_time    = 1.0         # s
+peak_heat_flux  = 21000    # W/m²
+ramp_up_time    = 1         # s
 steady_time     = 3600.0     # s
 ramp_down_time  = 1        # s
 post_cool_time  = 1       # s
@@ -93,6 +94,73 @@ def heat_flux_profile(t):
         return 0.0
 
 
+def plot_temperature_envelope(time_hist, outer_T_hist, inner_T_hist, layer_T_hist,
+                               layer_stack, layer_ranges, rho, cp, dx, T_final):
+    """
+    Plots max, mean, and min temperature across the full TPS stack over time.
+    Styled to match ANSYS-style dark background temperature history plot.
+    """
+    # Reconstruct full temperature field statistics at each timestep
+    # We have outer (node 0) and inner (node -1) surface temps,
+    # plus per-layer means. Approximate min/max from layer means + surfaces.
+    n_steps = len(time_hist)
+
+    # Build approximate per-step min/max/mean from available data
+    # Max  = outer surface (always hottest)
+    # Min  = inner surface (always coldest)
+    # Mean = mass-weighted average of layer means
+    T_max_hist = outer_T_hist - 273.15   # K → °C
+    T_min_hist = inner_T_hist - 273.15
+
+    # Mass-weighted mean across all layers
+    total_heat_cap = 0.0
+    weights = {}
+    for name, (s, e) in layer_ranges.items():
+        w = rho[s] * cp[s] * (e - s) * dx
+        weights[name] = w
+        total_heat_cap += w
+
+    T_mean_hist = np.zeros(n_steps)
+    for name, w in weights.items():
+        T_mean_hist += (layer_T_hist[name] - 273.15) * w
+    T_mean_hist /= total_heat_cap
+
+    # ── Figure: ANSYS-style dark background ──────────────────────────────
+    fig, ax = plt.subplots(figsize=(13, 6))
+    fig.patch.set_facecolor("#3C3C3C")
+    ax.set_facecolor("#5A5A5A")
+
+    ax.plot(time_hist, T_max_hist,  color="#4CAF50", lw=1.8,
+            label=f"Maximum  ({T_max_hist[-1]:.1f} °C at t={time_hist[-1]:.0f} s)")
+    ax.plot(time_hist, T_mean_hist, color="#2196F3", lw=1.8, ls="--",
+            label=f"Average  ({T_mean_hist[-1]:.1f} °C at t={time_hist[-1]:.0f} s)")
+    ax.plot(time_hist, T_min_hist,  color="#F44336", lw=1.8,
+            label=f"Minimum  ({T_min_hist[-1]:.1f} °C at t={time_hist[-1]:.0f} s)")
+
+    # Axis formatting to match dark theme
+    ax.tick_params(colors="white", labelsize=9)
+    ax.xaxis.label.set_color("white")
+    ax.yaxis.label.set_color("white")
+    ax.title.set_color("white")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("white")
+
+    # Y-axis: show min value at bottom like ANSYS
+    y_min = T_min_hist.min()
+    y_max = T_max_hist.max()
+    ax.set_ylim(y_min - 5, y_max * 1.05)
+    ax.yaxis.set_major_formatter(plt.FormatStrFormatter("%.3g"))
+
+    ax.set_xlabel("Time  [s]", fontsize=11)
+    ax.set_ylabel("[°C]", fontsize=11)
+    ax.set_title("Temperature History — Maximum / Average / Minimum", fontsize=12)
+    ax.legend(fontsize=9, framealpha=0.3, edgecolor="white",
+              labelcolor="white", loc="upper left")
+    ax.grid(True, alpha=0.2, color="white", lw=0.5)
+    ax.set_xlim(time_hist[0], time_hist[-1])
+
+    plt.tight_layout()
+    plt.show()
 # =============================================================================
 # MESH
 # =============================================================================
@@ -419,36 +487,67 @@ plt.tight_layout()
 plt.show()
 
 # ── Figure 2: Through-thickness snapshots ──────────────────────────────────
+# Professional report style: black/grey lines with distinct markers and
+# dashed/solid/dotted linestyles instead of a colour gradient.
+
+REPORT_STYLES = [
+    dict(color="#D62728", lw=1.5, ls="-",  marker="o", ms=5, mfc="white", mew=1.2),  # red
+    dict(color="#E8791A", lw=1.5, ls="--", marker="s", ms=5, mfc="white", mew=1.2),  # orange
+    dict(color="#BCBD22", lw=1.5, ls=":",  marker="^", ms=5, mfc="white", mew=1.2),  # yellow-green
+    dict(color="#2CA02C", lw=1.5, ls="-",  marker="D", ms=5, mfc="white", mew=1.2),  # green
+    dict(color="#17BECF", lw=1.5, ls="--", marker="v", ms=5, mfc="white", mew=1.2),  # cyan
+    dict(color="#1F77B4", lw=1.5, ls="-.", marker="P", ms=5, mfc="white", mew=1.2),  # blue
+    dict(color="#9467BD", lw=1.5, ls="-",  marker="*", ms=7, mfc="white", mew=1.2),  # purple
+    dict(color="#7B3F00", lw=1.5, ls="--", marker="h", ms=5, mfc="white", mew=1.2),  # brown
+]
+
+MARKER_EVERY = max(1, n_nodes // 12)   # place ~12 markers per curve
+
 fig2, ax = plt.subplots(figsize=(11, 6))
 x_mm = x * 1e3
 
-# Layer background bands
+# Layer background bands (light grey tones, no colour, print-friendly)
+layer_greys = [0.92, 0.82, 0.72]   # alternating light greys per layer
 cx_mm = 0.0
 for i, (name, th) in enumerate(layer_stack):
     end_mm = cx_mm + th * 1e3
-    ax.axvspan(cx_mm, end_mm, alpha=0.10,
-               color=cmap_layers(i), label=name)
+    ax.axvspan(cx_mm, end_mm,
+               facecolor=str(layer_greys[i % len(layer_greys)]),
+               alpha=1.0, zorder=0)
     ax.text((cx_mm + end_mm) / 2,
-            initial_temperature + 8,
-            name.replace("_", "\n"), ha="center", va="bottom",
-            fontsize=7.5, color=cmap_layers(i), fontweight="bold",
+            initial_temperature + 6,
+            name.replace("_", "\n"),
+            ha="center", va="bottom",
+            fontsize=7.5, color="black", fontweight="bold",
             linespacing=1.2)
     cx_mm = end_mm
 
-for (t_snap, T_snap), col in zip(snapshots, SHADES):
-    ax.plot(x_mm, T_snap, color=col, lw=1.8, label=f"t = {t_snap:.0f} s")
+# Add thin vertical dividers at layer boundaries
+cx_mm = 0.0
+for _, th in layer_stack[:-1]:
+    cx_mm += th * 1e3
+    ax.axvline(cx_mm, color="black", lw=0.8, ls="-", zorder=2)
 
-sm = plt.cm.ScalarMappable(
-    cmap="inferno",
-    norm=plt.Normalize(vmin=snapshots[0][0], vmax=snapshots[-1][0]))
-sm.set_array([])
-cbar = plt.colorbar(sm, ax=ax, pad=0.01)
-cbar.set_label("Time [s]", fontsize=10)
+# Plot each snapshot
+for idx, (t_snap, T_snap) in enumerate(snapshots):
+    style = REPORT_STYLES[idx % len(REPORT_STYLES)]
+    ax.plot(x_mm, T_snap,
+            label=f"$t$ = {t_snap:.0f} s",
+            markevery=MARKER_EVERY,
+            zorder=3,
+            **style)
 
-ax.set(xlabel="Distance from outer surface [mm]",
-       ylabel="Temperature [K]",
-       title="Through-Thickness Temperature Profiles at Selected Times")
-ax.grid(alpha=0.25)
+ax.set_xlabel("Distance from outer surface [mm]", fontsize=11)
+ax.set_ylabel("Temperature [K]", fontsize=11)
+ax.set_title("Through-Thickness Temperature Profiles at Selected Times", fontsize=12)
+ax.legend(fontsize=9, framealpha=0.9, edgecolor="black",
+          loc="upper right", ncol=2)
+ax.grid(True, alpha=0.3, color="black", lw=0.5)
+ax.set_xlim(0, x_mm[-1])
+
 plt.tight_layout()
-
 plt.show()
+
+plot_temperature_envelope(time_hist, outer_T_hist, inner_T_hist,
+                           layer_T_hist, layer_stack, layer_ranges,
+                           rho, cp, dx, T)
