@@ -1,56 +1,4 @@
-"""
-TPS Through-Thickness Thermal Solver  —  Cabin AC Power Edition
-================================================================
-Crank–Nicolson implicit finite-difference scheme (θ = 0.5).
-  - Unconditionally stable; large dt allowed
-  - 2nd-order accurate in both space and time
-  - Tri-diagonal system solved via scipy.linalg.solve_banded  O(N)
 
-Outer BC  (x = 0):  q_aero(t) – ε σ (T⁴ – T_amb⁴)
-Inner BC  (x = L):  convective to cabin air  →  q = h_inner · (T_wall – T_cabin)
-                    The cabin air is held at T_cabin_setpoint by the AC.
-                    AC power  =  max(0,  q_wall→air)  per m²  [W/m²]
-
-New outputs vs base solver
---------------------------
-  • Inner wall (Ti shell) temperature history
-  • Cabin-air convective heat flux history  q_cabin(t)  [W/m²]
-  • Instantaneous and cumulative AC cooling power  [W / kJ per m²]
-  • Total AC energy for the full fuselage panel area  [kWh]
-
-Geometry accuracy note
-----------------------
-This is a 1-D Cartesian (flat-plate) solver.  For a cylindrical fuselage
-the governing equation in the radial direction is:
-
-    ρ cp ∂T/∂t  =  (1/r) ∂/∂r [r k ∂T/∂r]
-
-which differs from the Cartesian form by the (1/r) metric factor.
-Three consequences are quantified by the geometric correction below:
-
-  1. Curvature divergence  —  for the same wall thickness the radial area
-     grows with radius, so the outer surface sees more aerodynamic heat per
-     unit volume than a flat plate implies.  Correction factor:
-         f_curv  =  r_outer / r_inner  =  (R + L) / R
-     where R = fuselage radius, L = TPS wall thickness.
-     For R = 2 m, L = 0.016 m:  f_curv ≈ 1.008  (< 1 % error — negligible).
-
-  2. Aerodynamic heating distribution  —  on a flat plate q is uniform.
-     On a cylinder the stagnation-line heat flux is ~√2 × higher than the
-     leeward side; the circumferential average is roughly 0.6–0.7 × peak.
-     This code uses the peak (conservative); set `q_circumferential_factor`
-     to adjust.
-
-  3. Inner surface area per unit outer area  —  again f_curv corrects this;
-     the AC power output of this solver should be multiplied by
-         (r_inner / r_outer)  ≈  0.992
-     for R = 2 m.  This is included in the corrected AC energy printout.
-
-Bottom line: for fuselage radii ≥ 1 m and typical TPS thicknesses (< 30 mm),
-the flat-plate error on heat flux and AC power is < 2 %.  The dominant
-uncertainty is the aerodynamic heating distribution (factor ~1.4–1.7 between
-stagnation and leeward), not the wall-curvature term.
-"""
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -58,9 +6,6 @@ from scipy.linalg import solve_banded
 
 from tps_materials import MATERIALS
 
-# =============================================================================
-# USER INPUTS
-# =============================================================================
 
 layer_stack = [
     ("CVI_C_SiC",    0.003),
