@@ -1,46 +1,4 @@
-#!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool  –  Multi-Segment Swept Wing
-===========================================================================
-Eckert Reference Enthalpy Method + Fay-Riddell stagnation correlations.
-Validated range: Mach 2–8, altitudes 10–65 km.
-Accuracy: ±15 % for cold-wall conditions (Tw/Taw ≤ 0.5).
 
-WING MODEL (new vs original)
------------------------------
-The original code treated the wing/fin as a single panel with one uniform
-sweep angle.  This rewrite implements a **multi-segment swept wing** drawn
-directly from Table 12.5:
-
-  Segment  | chord_root  | chord_tip | span    | sweep_LE  | dihedral
-  ---------|-------------|-----------|---------|-----------|--------
-  Root/con | 0.661 m     | —         | 3.5 m   | 64.0°     | —
-  Inner    | 33.14 m     | 13.26 m   | 7.02 m  | 70.55°    | +1.0°
-  Mid      | 13.26 m     | 10.77 m   | 4.33 m  | 29.84°    | +1.0°
-  Outer    | 10.77 m     |  4.00 m   | 3.29 m  | 67.50°    | -20.0°
-
-For each segment the sweep angle determines:
-  1. The **normal Mach number**:  M_n = M_inf · cos(Λ)
-     This sets the post-shock edge conditions for the LE Fay-Riddell flux.
-  2. The **chord-normal velocity** component that drives the flat-plate BL:
-     u_n = V_inf · cos(Λ)
-  3. The **effective chord** normal to the leading edge:
-     c_n = c_local · cos(Λ)
-
-Each spanwise station is computed with the *local* sweep-corrected edge
-conditions.  The dihedral angle also modifies the effective AoA seen by
-each segment:
-     δ_eff = AoA · cos(Λ) + dihedral
-
-References
-----------
-  Eckert (1955); Fay & Riddell (1958); Anderson (2006) §12;
-  U.S. Standard Atmosphere (1976); Küchemann (1978) swept-wing normal Mach.
-"""
-
-# ============================================================
-#  USER INPUTS  –  Edit this block only
-# ============================================================
 
 MACH             = 5.0    # Free-stream Mach number  [-]
 ALTITUDE_KM      = 30.0   # Cruise altitude           [km]
