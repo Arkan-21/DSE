@@ -1,34 +1,4 @@
-#!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool
-=============================================
-Eckert's Reference Enthalpy Method + Fay-Riddell stagnation correlation.
-Validated range: Mach 2–8, altitudes 10–65 km.
-Accuracy: ±15 % for cold-wall conditions (Tw/Taw ≤ 0.5).
 
-References
-----------
-  Eckert, E.R.G. (1955). Engineering relations for friction and heat transfer
-      to surfaces in high-velocity flow. J. Aeronautical Sciences, 22(8).
-  Fay, J.A. & Riddell, F.R. (1958). Theory of stagnation point heat transfer
-      in dissociated air. J. Aeronautical Sciences, 25(2), 73–85.
-  U.S. Standard Atmosphere (1976).
-  Anderson, J.D. (2006). Hypersonic and High Temperature Gas Dynamics, 2nd ed.
-  Tian et al. (2025); Şimşek et al. (2020); Nozaki (2007).
-
-Design Notes
-------------
-  • Dissociation is NOT modelled (calorically perfect gas, γ = 1.4).
-    Above ~Mach 7 or below ~30 km this introduces non-trivial error.
-  • Radiation and ablation are NOT included.
-  • Shock–boundary-layer interaction, real-gas effects, and 3-D corner
-    flows at the wing–body junction require CFD / higher-order tools.
-  • For TPS sizing: use turbulent mode and apply a 1.5× margin on top.
-"""
-
-# ============================================================
-#  USER INPUTS  –  Edit this block only
-# ============================================================
 
 MACH              = 5.0     # Free-stream Mach number  [-]
 ALTITUDE_KM       = 31.0    # Cruise altitude           [km]
@@ -51,9 +21,7 @@ NUM_POINTS        = 100     # Points along each surface
 SAVE_FIGURES      = True    # False → interactive display; True → save PNGs
 FIGURE_PREFIX     = "heat_flux"
 
-# ============================================================
-#  END OF USER INPUTS
-# ============================================================
+
 
 import math
 import warnings
