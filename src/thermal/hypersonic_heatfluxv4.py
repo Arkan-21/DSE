@@ -1,59 +1,4 @@
-#!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool
-=============================================
-Eckert's Reference Enthalpy Method + Fay-Riddell stagnation correlation.
-Validated range: Mach 2–8, altitudes 10–65 km.
-Accuracy: ±15 % for cold-wall conditions (Tw/Taw ≤ 0.5).
 
-Geometry assumptions
---------------------
-  • Fuselage  : circular cylinder — symmetric body.  Upper and lower surfaces
-                see the same edge conditions (freestream + AoA correction).
-                At AoA = 0° the surfaces are identical by symmetry.
-  • Wings     : flat-plate aerofoil section.
-                Lower surface — oblique shock (wedge_angle + AoA).
-                Upper surface — Prandtl–Meyer expansion (wedge_angle - AoA),
-                or compression if (wedge_angle - AoA) > 0.
-  • Nose      : hemisphere — Fay–Riddell normal-shock stagnation.
-  • Wing LE   : blunt cylinder — same Fay–Riddell approach with V_normal.
-
-AoA effect on the cylindrical fuselage
----------------------------------------
-  A cylinder at angle of attack does not have a simple wedge-angle flow.
-  The local surface inclination varies around the circumference.  The dominant
-  effect on the top/bottom centre-lines is:
-    • Bottom (windward) : effective local flow angle ≈ +AoA → weak oblique
-      shock / compression; modest heating increase.
-    • Top    (leeward)  : effective local flow angle ≈ -AoA → expansion;
-      modest heating decrease.
-  This is modelled here using the same oblique-shock / Prandtl–Meyer framework
-  applied to the fuselage as to the wing, with the ±AoA as the deflection angle.
-  At AoA = 0° both surfaces collapse to the free-stream edge condition,
-  giving identical heating — consistent with cylinder symmetry.
-
-References
-----------
-  Eckert, E.R.G. (1955). Engineering relations for friction and heat transfer
-      to surfaces in high-velocity flow. J. Aeronautical Sciences, 22(8).
-  Fay, J.A. & Riddell, F.R. (1958). Theory of stagnation point heat transfer
-      in dissociated air. J. Aeronautical Sciences, 25(2), 73–85.
-  U.S. Standard Atmosphere (1976).
-  Anderson, J.D. (2006). Hypersonic and High Temperature Gas Dynamics, 2nd ed.
-
-Design Notes
-------------
-  • Dissociation is NOT modelled (calorically perfect gas, γ = 1.4).
-    Above ~Mach 7 or below ~30 km this introduces non-trivial error.
-  • Radiation and ablation are NOT included.
-  • Shock–boundary-layer interaction, real-gas effects, and 3-D corner
-    flows at the wing–body junction require CFD / higher-order tools.
-  • For TPS sizing: use turbulent mode and apply a 1.5× margin on top.
-"""
-
-# ============================================================
-#  USER INPUTS  –  Edit this block only
-# ============================================================
 
 MACH              = 5.0     # Free-stream Mach number  [-]
 ALTITUDE_KM       = 31.0    # Cruise altitude           [km]
@@ -79,9 +24,6 @@ NUM_POINTS        = 100     # Points along each surface
 SAVE_FIGURES      = True    # False → interactive display; True → save PNGs
 FIGURE_PREFIX     = "heat_flux"
 
-# ============================================================
-#  END OF USER INPUTS
-# ============================================================
 
 import math
 import warnings

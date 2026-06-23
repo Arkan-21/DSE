@@ -1278,7 +1278,7 @@ class Ramjet:
         P_th   = Pt4 * (2.0/(g4+1.0))**(g4/(g4-1.0))
         rho_th = P_th/(R_nz*T_th); a_th = np.sqrt(g4*R_nz*T_th)
         # Throat area from continuity: A* = ṁ / (ρ* · a*)
-        A_th   = mdot/(rho_th*a_th)
+        A_th   = mdot/(rho_th*a_th)/1.15
 
         print(f"\n── Section 4→5 — Nozzle convergent ──")
         print(f"  A4={A4:.4f} m²  →  A_throat={A_th:.4f} m²   "
@@ -1490,64 +1490,135 @@ class Ramjet:
 
         plt.tight_layout(); plt.show()
 
-
-# ===========================================================================
-# Pretty-printer
-# ===========================================================================
-def print_section(title, props, fields):
+class RamHelp(Ramjet):
     """
-    Print a formatted table for one engine station.
-
-    Parameters
-    ----------
-    title  : section heading string
-    props  : dict of property values (keyed by field name)
-    fields : list of (label, key, unit, scale) tuples
-             scale multiplies the raw value before printing (e.g. 1e-3 for Pa→kPa)
+    Subclass of Ramjet that adds convenience methods for printing station
+    tables and extracting axial flow-field distributions.
+ 
+    All Ramjet cycle methods are inherited unchanged.  RamHelp adds:
+      print_section()          — formatted station property table
+      temperature_distribution() — axial static-temperature array
+      velocity_distribution()  — axial velocity array
     """
-    w = 34
-    print(f"\n{'─'*65}\n  {title}\n{'─'*65}")
-    for label, key, unit, scale in fields:
-        val = props.get(key, float("nan"))
-        try:    print(f"  {label:<{w}} {val*scale:>12.4f}  {unit}")
-        except: print(f"  {label:<{w}} {'nan':>12}  {unit}")
-    print(f"{'─'*65}")
-
-
-# ===========================================================================
-# Standalone utility
-# ===========================================================================
-def temperature_distribution(*sections):
-    """
-    Return the static temperature distribution along the engine axis.
-
-    Pass section result dicts in order: iso, sec2, sec3, sec4, sec5, sec6
-    (any trailing sections may be omitted).
-
-    Returns
-    -------
-    x : np.ndarray  — axial position [m] from isolator inlet
-    T : np.ndarray  — static temperature [K]
-    """
-    x_out, T_out, x_offset = [], [], 0.0
-    for sec in sections:
-        sol = sec["solution"]
-        x_local = np.asarray(sol["x"])
-        x_out.append(x_local + x_offset)
-        T_out.append(np.asarray(sol["T"]))
-        x_offset += x_local[-1]
-    return np.concatenate(x_out), np.concatenate(T_out)
+ 
+    # ------------------------------------------------------------------
+    # Pretty-printer
+    # ------------------------------------------------------------------
+    @staticmethod
+    def print_section(title, props, fields):
+        """
+        Print a formatted table for one engine station.
+ 
+        Parameters
+        ----------
+        title  : section heading string
+        props  : dict of property values (keyed by field name)
+        fields : list of (label, key, unit, scale) tuples
+                 scale multiplies the raw value before printing (e.g. 1e-3 for Pa→kPa)
+        """
+        w = 34
+        print(f"\n{'─'*65}\n  {title}\n{'─'*65}")
+        for label, key, unit, scale in fields:
+            val = props.get(key, float("nan"))
+            try:    print(f"  {label:<{w}} {val*scale:>12.4f}  {unit}")
+            except: print(f"  {label:<{w}} {'nan':>12}  {unit}")
+        print(f"{'─'*65}")
+ 
+    # ------------------------------------------------------------------
+    # Axial distribution utilities
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _concat_field(sections, field):
+        """
+        Concatenate a named field from each section's ODE solution dict into
+        a single array, offsetting the x-coordinate so it is continuous from
+        the start of the first section.
+ 
+        Parameters
+        ----------
+        sections : sequence of section result dicts (each has a "solution" key)
+        field    : string key to extract from each sol dict (e.g. "T", "V")
+ 
+        Returns
+        -------
+        x      : np.ndarray  — continuous axial position [m]
+        values : np.ndarray  — concatenated field values
+        """
+        x_out, v_out, x_offset = [], [], 0.0
+        for sec in sections:
+            sol = sec["solution"]
+            x_local = np.asarray(sol["x"])
+            x_out.append(x_local + x_offset)
+            v_out.append(np.asarray(sol[field]))
+            x_offset += x_local[-1]
+        return np.concatenate(x_out), np.concatenate(v_out)
+ 
+    @staticmethod
+    def temperature_distribution(*sections):
+        """
+        Return the static temperature distribution along the engine axis.
+ 
+        Pass section result dicts in order: iso, sec2, sec3, sec4, sec5, sec6
+        (any trailing sections may be omitted).
+ 
+        Returns
+        -------
+        x : np.ndarray  — axial position [m] from isolator inlet
+        T : np.ndarray  — static temperature [K]
+        """
+        x_out, T_out, x_offset = [], [], 0.0
+        for sec in sections:
+            sol = sec["solution"]
+            x_local = np.asarray(sol["x"])
+            x_out.append(x_local + x_offset)
+            T_out.append(np.asarray(sol["T"]))
+            x_offset += x_local[-1]
+        return np.concatenate(x_out), np.concatenate(T_out)
+ 
+    @staticmethod
+    def velocity_distribution(*sections):
+        """
+        Return the flow velocity distribution along the engine axis.
+ 
+        Pass section result dicts in order: iso, sec2, sec3, sec4, sec5, sec6
+        (any trailing sections may be omitted).
+ 
+        Returns
+        -------
+        x : np.ndarray  — axial position [m] from isolator inlet
+        V : np.ndarray  — flow velocity [m/s]
+        """
+        x_out, V_out, x_offset = [], [], 0.0
+        for sec in sections:
+            sol = sec["solution"]
+            x_local = np.asarray(sol["x"])
+            x_out.append(x_local + x_offset)
+            V_out.append(np.asarray(sol["V"]))
+            x_offset += x_local[-1]
+        return np.concatenate(x_out), np.concatenate(V_out)
 
 
 # ===========================================================================
 # Entry point
 # ===========================================================================
 if __name__ == "__main__":
-
+ 
     # ── Configure here ───────────────────────────────────────────────────────
     geom = Geometry(
         A0  = 4.5,      # Inlet capture area                      [m²]
         # Section lengths
+<<<<<<< HEAD
+        L01 = 0.60,     # Inlet / compression ramp                [m]
+        L12 = 0.5,     # Isolator duct                           [m]
+        L23 = 0.42,     # Diverging combustor                     [m]
+        L34 = 0.28,     # Constant-area combustor                 [m]
+        L45 = 0.35,     # Nozzle convergent                       [m]
+        L56 = 1.20,     # Nozzle divergent                        [m]
+        # Station areas (A1 and A5/throat computed at run-time)
+        A2  = 4.05,     # Isolator exit                           [m²]
+        A3  = 4.95,     # Diverging combustor exit                [m²]
+        A4  = 4.95,     # Constant-area combustor exit (= A3)     [m²]
+=======
         L01 = 3,     # Inlet / compression ramp                [m]
         L12 = 1.2,     # Isolator duct                           [m]
         L23 = 1.4,     # Diverging combustor                     [m]
@@ -1558,28 +1629,36 @@ if __name__ == "__main__":
         A2  = 4.05,     # Isolator exit                           [m²]
         A3  = 4.95,     # Diverging combustor exit                [m²]
         A4  = 4.95 ,     # Constant-area combustor exit (= A3)     [m²]
+>>>>>>> f3e63a3a33d8aeff5081b3fa16b20db5e86999cd
         A6  = 7.2,     # Nozzle exit                             [m²]
     )
-
+ 
     assump = Assumptions(
+<<<<<<< HEAD
+        h0           = 30_000.0,  # Altitude                      [m]
+        Ma0          = 5,       # Flight Mach number            [—]
+        phi          = 0.9,       # Equivalence ratio             [—]
+        theta        = 90,      # Injection angle               [deg]
+=======
         h0           = 29_300.0,  # Altitude                      [m]
         Ma0          = 4.4,       # Flight Mach number            [—]
         phi          = 0.7,       # Equivalence ratio             [—]
         theta        = 0,      # Injection angle               [deg]
+>>>>>>> f3e63a3a33d8aeff5081b3fa16b20db5e86999cd
         mixing_coeff = 0.176,     # η curve coefficient           [—]
         Ma_COMB      = 0.3,      # Combustor-inlet Mach          [—]
         Cf           = 0.003,     # Skin-friction coefficient     [—]
         HHV          = 141.8e6,   # H₂ higher heating value       [J/kg_fuel]
     )
     # ────────────────────────────────────────────────────────────────────────
-
+ 
     print(f"\n{'═'*65}")
     print(f"  SCRAMJET/RAMJET  —  H₂ fuel  φ={assump.phi}  "
           f"h={assump.h0/1e3:.0f} km  Ma₀={assump.Ma0}")
     print(f"{'═'*65}")
-
+ 
     # Run the full engine cycle, section by section.
-    eng  = Ramjet(geom=geom, assump=assump)
+    eng  = RamHelp(geom=geom, assump=assump)
     inp  = eng.station_0()
     iso  = eng.station_1(inp)
     sec2 = eng.section_12(iso)
@@ -1588,8 +1667,8 @@ if __name__ == "__main__":
     sec5 = eng.section_45(sec4)          # nozzle convergent
     sec6 = eng.section_56(sec5)          # nozzle divergent
     perf = eng.performance(inp, sec6, sec3)
-
-    print_section("Station 0 — Freestream", inp, [
+ 
+    eng.print_section("Station 0 — Freestream", inp, [
         ("Mach number",        "Ma",   "—",      1.0),
         ("Static temperature", "T",    "K",      1.0),
         ("Static pressure",    "P",    "kPa",    1e-3),
@@ -1599,7 +1678,7 @@ if __name__ == "__main__":
         ("Total temperature",  "Tt",   "K",      1.0),
         ("Total pressure",     "Pt",   "kPa",    1e-3),
     ])
-    print_section("Station 1 — Isolator inlet", iso, [
+    eng.print_section("Station 1 — Isolator inlet", iso, [
         ("Mach number",        "Ma",      "—",   1.0),
         ("Static temperature", "T",       "K",   1.0),
         ("Static pressure",    "P",       "kPa", 1e-3),
@@ -1608,7 +1687,7 @@ if __name__ == "__main__":
         ("Pressure recovery",  "sigma_c", "—",   1.0),
         ("Isolator inlet area","A",       "m²",  1.0),
     ])
-    print_section("Station 3 — Diverging combustor exit", sec3, [
+    eng.print_section("Station 3 — Diverging combustor exit", sec3, [
         ("Mach number",        "Ma",    "—",    1.0),
         ("Static temperature", "T",     "K",    1.0),
         ("Static pressure",    "P",     "kPa",  1e-3),
@@ -1617,7 +1696,7 @@ if __name__ == "__main__":
         ("Mass flow (total)",  "mdot",  "kg/s", 1.0),
         ("Fuel mass flow",     "mfuel", "kg/s", 1.0),
     ])
-    print_section("Station 4 — Constant-area combustor exit", sec4, [
+    eng.print_section("Station 4 — Constant-area combustor exit", sec4, [
         ("Mach number",        "Ma",  "—",     1.0),
         ("Static temperature", "T",   "K",     1.0),
         ("Static pressure",    "P",   "kPa",   1e-3),
@@ -1626,13 +1705,13 @@ if __name__ == "__main__":
         ("Static enthalpy",    "h",   "MJ/kg", 1e-6),
         ("Total enthalpy",     "ht",  "MJ/kg", 1e-6),
     ])
-    print_section("Station 5 — Nozzle throat", sec5, [
+    eng.print_section("Station 5 — Nozzle throat", sec5, [
         ("Mach number",        "Ma",  "—",   1.0),
         ("Static temperature", "T",   "K",   1.0),
         ("Static pressure",    "P",   "kPa", 1e-3),
         ("Throat area",        "A",   "m²",  1.0),
     ])
-    print_section("Station 6 — Nozzle exit", sec6, [
+    eng.print_section("Station 6 — Nozzle exit", sec6, [
         ("Mach number",        "Ma",  "—",   1.0),
         ("Static temperature", "T",   "K",   1.0),
         ("Static pressure",    "P",   "kPa", 1e-3),
@@ -1641,7 +1720,7 @@ if __name__ == "__main__":
         ("Total pressure",     "Pt",  "kPa", 1e-3),
         ("Exit area",          "A",   "m²",  1.0),
     ])
-    print_section("PERFORMANCE", perf, [
+    eng.print_section("PERFORMANCE", perf, [
         ("Internal thrust Fin",  "Fin",      "N",      1.0),
         ("Specific impulse Isp", "Isp",      "s",      1.0),
         ("Specific thrust Ia",   "Ia",       "N·s/kg", 1.0),
@@ -1653,8 +1732,8 @@ if __name__ == "__main__":
           f"FAR={sec3['mfuel']/inp['mdot']:.5f}  "
           f"ṁ_fuel={sec3['mfuel']:.4f} kg/s  "
           f"ṁ_air={inp['mdot']:.4f} kg/s")
-
+ 
     eng.plot_flowpath(inp, iso, sec2, sec3, sec4, sec5, sec6)
-
+ 
     # Temperature distribution example
-    x_T, T_dist = temperature_distribution(iso, sec2, sec3, sec4, sec5, sec6)
+    x_T, T_dist = eng.temperature_distribution(iso, sec2, sec3, sec4, sec5, sec6)

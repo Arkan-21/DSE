@@ -686,16 +686,16 @@ class Ramjet:
  
     # ── Axial lengths [m] ─────────────────────────────────────────────────
     L01 = 0.60   # inlet / oblique-shock diffuser
-    L12 = 0.15   # constant-area isolator segment
-    L23 = 0.1   # fuel injection zone
-    L34 = 0.30   # combustor  (longer than scramjet: subsonic mixing needs more room)
+    L12 = 0.25   # constant-area isolator segment
+    L23 = 0.42   # fuel injection zone
+    L34 = 0.28   # combustor  (longer than scramjet: subsonic mixing needs more room)
     L45 = 1.20   # nozzle (convergent-divergent, modelled as diverging section only)
  
     # ── Area ratios (relative to A1) ──────────────────────────────────────
-    alpha12 = 0.85   # slight expansion: sec 1 → 2
-    alpha13 = 0.75   # continued diffusion to combustor inlet (sec 1 → 3)
-    alpha14 = 1.0371   # slight taper of combustor (sec 1 → 4 reference)
-    alpha05 = 2   # nozzle exit / A0  (large: supersonic exit)
+    alpha12 = 4.5/4.05   # slight expansion: sec 1 → 2
+    alpha13 = 4.5/4.95   # continued diffusion to combustor inlet (sec 1 → 3)
+    alpha14 = 4.5/4.95   # slight taper of combustor (sec 1 → 4 reference)
+    alpha05 = 1.6   # nozzle exit / A0  (large: supersonic exit)
  
     # ── Aerothermodynamic parameters ──────────────────────────────────────
     Ma_COMB    = 0.30   # target Mach at combustor inlet (subsonic, replaces EPSILON*Ma0)
@@ -1442,8 +1442,8 @@ if __name__ == "__main__":
     eng = Ramjet()
 
     h_km = 25.0
-    Ma0  = 3.0
-    mdot = 150.0
+    Ma0  = 5.0
+    mdot = 122.3541
     phi  = 0.5
 
     print(f"\n{'═'*65}")

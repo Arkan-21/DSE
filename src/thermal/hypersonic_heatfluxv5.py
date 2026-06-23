@@ -1,39 +1,4 @@
-#!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool
-=============================================
-Eckert's Reference Enthalpy Method + Fay-Riddell stagnation correlation.
-Validated range: Mach 2–8, altitudes 10–65 km.
-Accuracy: ±15 % for cold-wall conditions (Tw/Taw ≤ 0.5).
 
-Geometry assumptions (UPDATED for nose‑cone + aft fuselage)
---------------------
-  • Nose cone (blunted tip):
-      - Stagnation point (Fay‑Riddell) using NOSE_RADIUS_M.
-      - Conical surface from tip to COCKPIT_LENGTH_M.
-      - Edge conditions from oblique shock (wedge_angle ± AoA).
-      - Heat flux via flat‑plate along the cone surface.
-  • Aft fuselage (COCKPIT_LENGTH_M to FUSELAGE_LENGTH_M):
-      - Edge conditions = post‑shock properties from the nose cone base.
-      - Conservative choice: no shoulder expansion (overpredicts → safe).
-      - Flat‑plate theory with those post‑shock edge properties.
-  • Wings       : flat‑plate aerofoil section (unchanged).
-  • Wing LE     : blunt cylinder – Fay‑Riddell (unchanged).
-
-Angle of attack effects
------------------------
-  • For both the nose cone and the aft fuselage, the windward side uses
-    effective deflection = (nose half‑angle + AoA), leeward side uses
-    (nose half‑angle – AoA).  Negative deflection → Prandtl‑Meyer expansion.
-  • The aft body is aligned with the vehicle axis (zero local incidence),
-    but the incoming flow (behind the nose shock) is already turned.
-    This model uses the post‑shock conditions directly (no further turning),
-    which is conservative.
-"""
-
-# ============================================================
-#  USER INPUTS  –  Edit this block only
-# ============================================================
 
 MACH              = 5.0     # Free-stream Mach number  [-]
 ALTITUDE_KM       = 31.0    # Cruise altitude           [km]
@@ -57,9 +22,7 @@ NUM_POINTS        = 200     # Points along each surface
 SAVE_FIGURES      = False    # False → interactive display; True → save PNGs
 FIGURE_PREFIX     = "heat_flux"
 
-# ============================================================
-#  END OF USER INPUTS
-# ============================================================
+
 
 import math
 import warnings

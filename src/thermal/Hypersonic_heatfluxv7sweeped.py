@@ -14,7 +14,7 @@ All figures are saved as vector PDFs.
 # ============================================================
 MACH             = 5.0
 ALTITUDE_KM      = 30.0
-WALL_TEMP_K      = 373.15
+WALL_TEMP_K      = 800
 IS_TURBULENT     = True
 AOA_DEG          = 1.0
 

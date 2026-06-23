@@ -1,70 +1,3 @@
-#!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool
-=============================================
-Eckert's Reference Enthalpy Method + Fay-Riddell stagnation correlation.
-Validated range: Mach 2–8, altitudes 10–65 km.
-Accuracy: ±15 % for cold-wall conditions (Tw/Taw ≤ 0.5).
-
-Geometry: ogive-cylinder (missile / slender vehicle)
------------------------------------------------------
-  The body is modelled as:
-    1.  Blunted ogive tip  (0 → OGIVE_LENGTH_M)
-    2.  Cylindrical aft body (OGIVE_LENGTH_M → BODY_LENGTH_M)
-
-  The tangent ogive is defined by two parameters: base radius R and
-  axial length L.  The profile is:
-        r(x) = sqrt(ρ² − (L−x)²) + R − ρ,   ρ = (R² + L²) / (2R)
-  where ρ is the ogive radius of curvature.  By construction:
-    • r(0) = 0          (pointed tip, then blunted with NOSE_RADIUS_M)
-    • r(L) = R          (tangent to cylinder – slope = 0 at junction)
-    • dr/dx → 0 at x=L  (smooth, no shoulder discontinuity)
-
-  Because the slope is zero at the cylinder junction, there is NO discrete
-  expansion fan at the shoulder.  The flow transitions smoothly.
-
-Aerodynamic modelling
----------------------
-  Ogive surface (station by station):
-    • Local surface slope φ(x) = atan(dr/dx) is computed at each axial station.
-    • Effective deflection for windward side = φ(x) + AoA
-                          for leeward  side = φ(x) − AoA
-    • Edge conditions are found via the TANGENT-WEDGE approximation:
-        – positive effective deflection → oblique shock
-        – negative effective deflection → Prandtl-Meyer expansion from
-          freestream (tangent-cone / tangent-wedge is standard for slender bodies)
-    • Local heat flux = flat_plate_heat_flux evaluated at the running
-      arc-length s from the stagnation point.
-
-  Cylinder section:
-    • Surface slope = 0°, so effective deflection = ±AoA.
-    • Same tangent-wedge / expansion logic applied.
-    • Arc-length continues from the ogive-cylinder junction.
-
-  Stagnation point:
-    • Fay-Riddell correlation using NOSE_RADIUS_M.
-
-  No sharp shoulder: because the ogive is tangent to the cylinder,
-  there is no discrete Prandtl-Meyer fan at the junction.
-
-References
-----------
-  Eckert (1955); Fay & Riddell (1958); Anderson (2006);
-  U.S. Standard Atmosphere (1976).
-
-Notes / limitations
--------------------
-  • Calorically perfect gas (γ = 1.4) — dissociation not modelled.
-  • Tangent-wedge is an engineering approximation; it gives good
-    results for slender bodies (φ < ~20°) but overestimates pressure
-    at the tip for blunter ogives.
-  • Radiation, ablation, and real-gas effects not included.
-  • For TPS sizing: use turbulent BL and apply ≥ 1.5× safety margin.
-"""
-
-# ============================================================
-#  USER INPUTS  –  Edit this block only
-# ============================================================
 
 MACH             = 5.0    # Free-stream Mach number  [-]
 ALTITUDE_KM      = 30.0   # Cruise altitude           [km]
@@ -90,9 +23,6 @@ NUM_POINTS       = 300    # Points along the body
 SAVE_FIGURES     = False   # False → interactive; True → save PNGs
 FIGURE_PREFIX    = "heat_flux"
 
-# ============================================================
-#  END OF USER INPUTS
-# ============================================================
 
 import math
 import warnings
