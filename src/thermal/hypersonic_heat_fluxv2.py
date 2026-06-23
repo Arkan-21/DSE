@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-Hypersonic Convective Heat Flux Analysis Tool
-For Mach 5 aircraft at 31 km altitude cruise condition
-Conservative engineering estimation using Eckert's Reference Enthalpy Method
 
-Author: Aerospace Thermal Analysis Tool
-References: Tian et al. (2025), Şimşek et al. (2020), Nozaki (2007)
-"""
 import matplotlib.pyplot as plt
 import numpy as np
 import math
