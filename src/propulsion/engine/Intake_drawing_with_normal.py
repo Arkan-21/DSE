@@ -426,7 +426,7 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
         lw=2,
         zorder=10
         )
-
+    
     ax.scatter(C[0],C[1],s=140,color="#404040",edgecolors="white",linewidths=2.0,zorder=20)
 
     flow_x0 = x_start + 0.8 * abs(x_start)
@@ -516,13 +516,50 @@ def draw_intake_cfd_style(results, figsize=(15, 6), mirror=False, stretch_factor
         fontsize=11,
         weight='bold'
     )
+        x_diff_end = x_ns + L_diffuser
 
+        ax.plot(
+        [x_diff_end, x_diff_end],
+        [get_ramp_y(x_diff_end), O[1] + ext_y_offset],
+        color=dim_color,
+        lw=1,
+        alpha=0.5
+    )
+
+        ax.annotate(
+        '',
+        xy=(x_ns, O[1]  + line_y_offset),
+        xytext=(x_diff_end, O[1] + line_y_offset),
+        arrowprops=dict(
+            arrowstyle='<->',
+            color=dim_color,
+            lw=1
+        )
+    )
+
+        ax.text(
+        0.5 * (x_ns + x_diff_end),
+        O[1] + text_y_offset,
+        rf"$L_{{diff}}$ = {L_diffuser:.3f} m",
+        color=dim_color,
+        ha='center',
+        va='bottom' if not mirror else 'top',
+        fontsize=11,
+        weight='bold'
+    )
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
    
-
+    ax.text(
+    0.5 * ((L1+L2)+x_ns),
+    -0.5,
+    "Aircraft Body",
+    fontsize=16,
+    fontweight='bold',
+    ha='center'
+)
    
 
     ax.set_xlim(x_start, x_cowl_end)
